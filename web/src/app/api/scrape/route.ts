@@ -1,9 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  fetchProfile,
-  fetchPosts,
-  extractVanityName,
-} from "@/lib/linkedin";
+import { fetchProfile, fetchPosts, extractVanityName } from "@/lib/linkedin";
 
 export const maxDuration = 30; // Vercel function timeout (seconds)
 
@@ -34,20 +30,21 @@ export async function POST(req: NextRequest) {
       vanityName = extractVanityName(profileUrl.trim());
     } catch {
       return NextResponse.json(
-        { error: "Invalid LinkedIn profile URL. Expected format: https://linkedin.com/in/username" },
+        {
+          error:
+            "Invalid LinkedIn profile URL. Expected format: https://linkedin.com/in/username",
+        },
         { status: 400 }
       );
     }
 
-    // Fetch profile data
-    const profile = await fetchProfile(liAtCookie, vanityName);
+    const limit = Math.min(Math.max(1, Number(postsLimit) || 10), 50);
 
-    // Fetch posts
-    const posts = await fetchPosts(
-      liAtCookie,
-      vanityName,
-      Math.min(postsLimit, 50)
-    );
+    // Run profile + posts fetch concurrently to save time
+    const [profile, posts] = await Promise.all([
+      fetchProfile(liAtCookie, vanityName),
+      fetchPosts(liAtCookie, vanityName, limit),
+    ]);
 
     return NextResponse.json({
       success: true,
@@ -59,6 +56,23 @@ export async function POST(req: NextRequest) {
     console.error("Scrape error:", error);
     const message =
       error instanceof Error ? error.message : "Unknown scraping error";
+
+    // Surface a friendlier message for auth failures
+    if (
+      message.toLowerCase().includes("redirect") ||
+      message.toLowerCase().includes("auth") ||
+      message.toLowerCase().includes("401") ||
+      message.toLowerCase().includes("403")
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "LinkedIn session expired or blocked. Please re-authenticate with a fresh li_at cookie.",
+        },
+        { status: 401 }
+      );
+    }
+
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

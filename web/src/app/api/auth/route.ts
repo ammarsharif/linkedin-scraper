@@ -13,34 +13,48 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const result = await validateCookie(cookie.trim());
+    const liAt = cookie.trim();
+    const result = await validateCookie(liAt);
 
     if (!result.valid) {
       return NextResponse.json(
-        { error: "Invalid or expired li_at cookie. Please get a fresh one." },
+        {
+          error:
+            "Invalid or expired li_at cookie. Please copy a fresh one from your browser.",
+        },
         { status: 401 }
       );
     }
 
-    // Set the cookie in an httpOnly cookie for subsequent requests
+    // Store the cookie in an httpOnly session cookie
     const response = NextResponse.json({
       success: true,
-      name: result.name,
+      name: result.name ?? "LinkedIn User",
     });
 
-    response.cookies.set("li_at_session", cookie.trim(), {
-      httpOnly: true,
+    const cookieOptions = {
       secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
+      sameSite: "strict" as const,
       path: "/",
       maxAge: 60 * 60 * 24 * 7, // 7 days
+    };
+
+    response.cookies.set("li_at_session", liAt, {
+      ...cookieOptions,
+      httpOnly: true, // httpOnly so JS can't read the actual cookie value
+    });
+
+    // Store display name in a readable cookie (not sensitive)
+    response.cookies.set("li_at_name", result.name ?? "LinkedIn User", {
+      ...cookieOptions,
+      httpOnly: false,
     });
 
     return response;
   } catch (error) {
     console.error("Auth error:", error);
     return NextResponse.json(
-      { error: "Failed to validate cookie" },
+      { error: "Server error while validating cookie. Please try again." },
       { status: 500 }
     );
   }
@@ -53,15 +67,17 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ authenticated: false });
   }
 
-  const result = await validateCookie(cookie);
+  // Quick lightweight check — don't re-validate on every navigation
+  // Just confirm the cookie exists (we validated it on login)
   return NextResponse.json({
-    authenticated: result.valid,
-    name: result.name,
+    authenticated: true,
+    name: req.cookies.get("li_at_name")?.value ?? "LinkedIn User",
   });
 }
 
 export async function DELETE() {
   const response = NextResponse.json({ success: true });
   response.cookies.delete("li_at_session");
+  response.cookies.delete("li_at_name");
   return response;
 }
