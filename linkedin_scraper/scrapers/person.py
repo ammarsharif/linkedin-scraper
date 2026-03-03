@@ -129,6 +129,49 @@ class PersonScraper(BaseScraper):
                     name = extracted
                     break
             
+            # Fallback: try page title - format is "Name - Title | LinkedIn"
+            if name == "Unknown":
+                try:
+                    page_title = await self.page.title()
+                    if page_title and "LinkedIn" in page_title:
+                        # Remove " | LinkedIn" suffix
+                        import re
+                        cleaned = re.sub(r'\s*\|\s*LinkedIn\s*$', '', page_title).strip()
+                        if cleaned:
+                            # Split by " - " to get name vs headline
+                            if " - " in cleaned:
+                                parts = cleaned.split(" - ")
+                                candidate = parts[0].strip()
+                            else:
+                                candidate = cleaned
+                            if candidate and len(candidate) > 1 and candidate != "LinkedIn":
+                                name = candidate
+                                logger.info(f"Got name from page title: {name}")
+                except Exception as e:
+                    logger.debug(f"Error getting name from page title: {e}")
+            
+            # Fallback: try og:title meta tag
+            if name == "Unknown":
+                try:
+                    og_title = await self.page.evaluate('''() => {
+                        const meta = document.querySelector('meta[property="og:title"]');
+                        return meta ? meta.getAttribute('content') : null;
+                    }''')
+                    if og_title:
+                        import re
+                        cleaned = re.sub(r'\s*\|\s*LinkedIn\s*$', '', og_title).strip()
+                        if cleaned:
+                            if " - " in cleaned:
+                                parts = cleaned.split(" - ")
+                                candidate = parts[0].strip()
+                            else:
+                                candidate = cleaned
+                            if candidate and len(candidate) > 1 and candidate != "LinkedIn":
+                                name = candidate
+                                logger.info(f"Got name from og:title: {name}")
+                except Exception as e:
+                    logger.debug(f"Error getting name from og:title: {e}")
+            
             # Try multiple selectors for location
             location_selectors = [
                 ".text-body-small.inline.t-black--light.break-words",

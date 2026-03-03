@@ -159,19 +159,27 @@ export default function ScraperPage() {
       "Scraped At",
     ];
 
+    // Properly escape a CSV field
+    const escapeCSV = (value: string): string => {
+      if (value.includes(",") || value.includes('"') || value.includes("\n") || value.includes("\r")) {
+        return `"${value.replace(/"/g, '""')}"`;
+      }
+      return value;
+    };
+
     const scrapedAt = new Date().toLocaleString();
     const rows = results.flatMap((r) =>
       r.posts.map((post) => [
-        r.profile.name,
-        r.profile.profileUrl,
-        `"${(post.text || "").replace(/"/g, '""')}"`,
-        post.postedDate,
-        String(post.reactionsCount),
-        String(post.commentsCount),
-        String(post.repostsCount),
-        post.postUrl,
-        post.urn,
-        scrapedAt,
+        escapeCSV(r.profile.name || ""),
+        escapeCSV(r.profile.profileUrl || ""),
+        escapeCSV(post.text || ""),
+        escapeCSV(post.postedDate || ""),
+        String(post.reactionsCount || 0),
+        String(post.commentsCount || 0),
+        String(post.repostsCount || 0),
+        escapeCSV(post.postUrl || ""),
+        escapeCSV(post.urn || ""),
+        escapeCSV(scrapedAt),
       ])
     );
 

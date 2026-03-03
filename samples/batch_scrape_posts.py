@@ -98,7 +98,29 @@ async def main():
                     profile_name = person.name or "Unknown"
                     print(f"  👤 Profile: {profile_name}")
                 except Exception as e:
-                    print(f"  ⚠️  Could not get profile name: {e}")
+                    print(f"  ⚠️  Could not get profile name via scraper: {e}")
+                
+                # Fallback: try to get name from page title if still Unknown
+                if profile_name == "Unknown":
+                    try:
+                        import re
+                        # Navigate to profile page to get the title
+                        await browser.page.goto(profile_url, wait_until='domcontentloaded', timeout=30000)
+                        await asyncio.sleep(2)
+                        page_title = await browser.page.title()
+                        if page_title and "LinkedIn" in page_title:
+                            cleaned = re.sub(r'\s*\|\s*LinkedIn\s*$', '', page_title).strip()
+                            if cleaned:
+                                if " - " in cleaned:
+                                    parts = cleaned.split(" - ")
+                                    candidate = parts[0].strip()
+                                else:
+                                    candidate = cleaned
+                                if candidate and len(candidate) > 1 and candidate != "LinkedIn":
+                                    profile_name = candidate
+                                    print(f"  👤 Profile (from title): {profile_name}")
+                    except Exception as e2:
+                        print(f"  ⚠️  Fallback name extraction also failed: {e2}")
                 
                 # Now scrape their posts
                 print(f"  📝 Scraping up to {POSTS_PER_PROFILE} posts...")
