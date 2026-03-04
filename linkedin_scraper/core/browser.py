@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import random
 from pathlib import Path
 from typing import Optional, Dict, Any
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page, Playwright
@@ -10,6 +11,35 @@ from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 from .exceptions import NetworkError
 
 logger = logging.getLogger(__name__)
+
+# ── Real Chrome user-agents (updated periodically) ───────────────────────────
+_USER_AGENTS = [
+    # Chrome 120 – Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    # Chrome 121 – Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    # Chrome 122 – Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    # Chrome 123 – Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    # Chrome 120 – macOS
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    # Chrome 122 – macOS
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    # Edge 121 – Windows (common in enterprise)
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 Edg/121.0.0.0",
+]
+
+# Common desktop viewport sizes — avoids robotic 1280x720 every time
+_VIEWPORTS = [
+    {"width": 1366, "height": 768},
+    {"width": 1440, "height": 900},
+    {"width": 1536, "height": 864},
+    {"width": 1600, "height": 900},
+    {"width": 1920, "height": 1080},
+    {"width": 1280, "height": 800},
+    {"width": 1280, "height": 720},
+]
 
 
 class BrowserManager:
@@ -25,18 +55,23 @@ class BrowserManager:
     ):
         """
         Initialize browser manager.
-        
+
         Args:
             headless: Run browser in headless mode
             slow_mo: Slow down operations by specified milliseconds
-            viewport: Browser viewport size (default: 1280x720)
-            user_agent: Custom user agent string
+            viewport: Browser viewport size (randomised from common desktop sizes if not set)
+            user_agent: Custom UA — leave None to use Playwright's real Chromium UA.
+                        WARNING: Setting a hardcoded UA that differs from the actual
+                        Chromium binary version creates a detectable mismatch.
             **launch_options: Additional Playwright launch options
         """
         self.headless = headless
         self.slow_mo = slow_mo
-        self.viewport = viewport or {"width": 1280, "height": 720}
-        self.user_agent = user_agent
+        # Randomise viewport per session so window dimensions vary naturally.
+        self.viewport = viewport or random.choice(_VIEWPORTS)
+        # Do NOT default to a hardcoded UA string — Playwright's built-in Chromium
+        # UA is self-consistent with all JS APIs; any override risks a version mismatch.
+        self.user_agent = user_agent  # None = use real Chromium UA
         self.launch_options = launch_options
         
         self._playwright: Optional[Playwright] = None
@@ -55,38 +90,69 @@ class BrowserManager:
         await self.close()
     
     async def start(self) -> None:
-        """Start Playwright and launch browser."""
+        """Start Playwright and launch browser with stealth anti-detection flags."""
         try:
             self._playwright = await async_playwright().start()
-            
-            # Launch browser
+
+            # Safe Chromium launch flags that suppress automation signals.
+            # Rules for what NOT to add:
+            #   - --disable-features=IsolateOrigins,site-per-process  → breaks cross-origin
+            #     cookie scoping, causing ERR_TOO_MANY_REDIRECTS on authenticated sites.
+            stealth_args = [
+                "--disable-blink-features=AutomationControlled",
+                "--disable-infobars",
+                "--no-first-run",
+                "--no-service-autorun",
+                "--password-store=basic",
+                "--use-mock-keychain",
+                f"--window-size={self.viewport['width']},{self.viewport['height']}",
+            ]
+
             self._browser = await self._playwright.chromium.launch(
                 headless=self.headless,
                 slow_mo=self.slow_mo,
+                args=stealth_args,
                 **self.launch_options
             )
-            
+
             logger.info(f"Browser launched (headless={self.headless})")
-            
-            # Create context
+
+            # Context: only set viewport (and UA if caller explicitly passed one).
+            # Do NOT add locale/timezone/color_scheme/extra_http_headers — every
+            # non-default value is an extra fingerprint signal and can cause
+            # inconsistencies that trip session-validation checks.
             context_options: Dict[str, Any] = {
                 "viewport": self.viewport,
             }
-            
             if self.user_agent:
                 context_options["user_agent"] = self.user_agent
-            
+
             self._context = await self._browser.new_context(**context_options)
-            
-            # Create initial page
             self._page = await self._context.new_page()
-            
+
+            # Log the real UA the browser is actually using
+            real_ua = await self._page.evaluate("() => navigator.userAgent")
+            logger.info(f"Real browser UA: {real_ua}")
+
+            # playwright-stealth v2: masks navigator.webdriver and ~15 other
+            # automation signals that LinkedIn's bot detection scripts probe.
+            try:
+                from playwright_stealth import Stealth
+                await Stealth().apply_stealth_async(self._page)
+                logger.info("playwright-stealth (v2) applied")
+            except ImportError:
+                logger.warning(
+                    "playwright-stealth not installed. Run: pip install playwright-stealth"
+                )
+            except Exception as e:
+                logger.warning(f"playwright-stealth error (non-fatal): {e}")
+
             logger.info("Browser context and page created")
-            
+
         except Exception as e:
             await self.close()
             raise NetworkError(f"Failed to start browser: {e}")
-    
+
     async def close(self) -> None:
         """Close browser and cleanup resources."""
         try:

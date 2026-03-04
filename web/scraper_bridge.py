@@ -12,6 +12,7 @@ import json
 import sys
 import re
 import os
+import random
 
 # Force UTF-8 on Windows so emoji in post text don't crash the codec
 if sys.stdout.encoding != 'utf-8':
@@ -25,6 +26,27 @@ sys.path.insert(0, ROOT)
 
 from linkedin_scraper.core.browser import BrowserManager
 from linkedin_scraper.scrapers.person_posts import PersonPostsScraper
+
+
+def _jitter(lo: float = 1.5, hi: float = 4.5) -> float:
+    """Return a random float in [lo, hi] to use as a sleep duration."""
+    return random.uniform(lo, hi)
+
+
+async def _human_pause(lo: float = 1.5, hi: float = 4.5) -> None:
+    """Sleep for a random duration that mimics human think-time."""
+    await asyncio.sleep(_jitter(lo, hi))
+
+
+async def _move_mouse_randomly(page) -> None:
+    """Move the mouse to a random position to simulate a real user."""
+    try:
+        x = random.randint(200, 1100)
+        y = random.randint(150, 650)
+        await page.mouse.move(x, y)
+        await asyncio.sleep(random.uniform(0.1, 0.4))
+    except Exception:
+        pass
 
 
 def cookie_string_to_list(raw: str) -> list:
@@ -96,10 +118,15 @@ async def scrape(cookie_string: str, profile_url: str, limit: int) -> dict:
         await browser.context.add_cookies(cookies)
         print("[bridge] Cookies loaded into browser", file=sys.stderr)
 
+        # Brief random idle before starting — avoids same-millisecond request patterns
+        await _human_pause(1.0, 3.0)
+
         # ── Step 1: Get the profile name ────────────────────────────────────
         try:
             await browser.page.goto(profile_url, wait_until="domcontentloaded", timeout=30000)
-            await asyncio.sleep(2)
+            # Randomised wait: 2.5 – 5 s (instead of fixed 2 s)
+            await _human_pause(2.5, 5.0)
+            await _move_mouse_randomly(browser.page)
 
             # Try h1 selector first
             name = ""

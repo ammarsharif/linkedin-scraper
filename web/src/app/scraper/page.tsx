@@ -40,6 +40,7 @@ export default function ScraperPage() {
   const [currentProfile, setCurrentProfile] = useState("");
   const [progress, setProgress] = useState({ current: 0, total: 0 });
   const [error, setError] = useState("");
+  const [confirmClear, setConfirmClear] = useState(false);
   const [toast, setToast] = useState<{
     message: string;
     type: "success" | "error";
@@ -64,6 +65,32 @@ export default function ScraperPage() {
     }
     checkAuth();
   }, [router]);
+
+  // Load state from localStorage
+  useEffect(() => {
+    try {
+      const storedStr = localStorage.getItem("scraper_state");
+      if (storedStr) {
+        const state = JSON.parse(storedStr);
+        if (state.profileUrls) setProfileUrls(state.profileUrls);
+        if (state.postsLimit) setPostsLimit(state.postsLimit);
+        if (state.results) setResults(state.results);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Save state to localStorage whenever changed
+  useEffect(() => {
+    if (profileUrls || results.length > 0) {
+      localStorage.setItem("scraper_state", JSON.stringify({
+        profileUrls,
+        postsLimit,
+        results
+      }));
+    }
+  }, [profileUrls, postsLimit, results]);
 
   const showToast = useCallback(
     (message: string, type: "success" | "error") => {
@@ -206,8 +233,30 @@ export default function ScraperPage() {
   }
 
   async function handleLogout() {
+    localStorage.removeItem("scraper_state");
+    localStorage.removeItem("sienna_state");
+    localStorage.removeItem("sienna_payload");
     await fetch("/api/auth", { method: "DELETE" });
     router.push("/");
+  }
+
+  function handleClearData() {
+    if (!confirmClear) {
+      // First click — ask for confirmation
+      setConfirmClear(true);
+      setTimeout(() => setConfirmClear(false), 4000); // auto-reset after 4s
+      return;
+    }
+    // Second click — actually clear everything
+    localStorage.removeItem("scraper_state");
+    localStorage.removeItem("sienna_state");
+    localStorage.removeItem("sienna_payload");
+    setResults([]);
+    setProfileUrls("");
+    setPostsLimit(10);
+    setError("");
+    setConfirmClear(false);
+    showToast("All data cleared. Ready for a new profile.", "success");
   }
 
   if (checking) {
@@ -251,7 +300,7 @@ export default function ScraperPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             {userName && (
               <div className="badge badge-success">
                 <span
@@ -261,6 +310,44 @@ export default function ScraperPage() {
                 {userName}
               </div>
             )}
+
+            {/* Clear data button — always visible in header */}
+            {(results.length > 0 || profileUrls.trim()) && (
+              <button
+                onClick={handleClearData}
+                disabled={loading}
+                className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-all cursor-pointer disabled:opacity-40"
+                style={{
+                  color: confirmClear ? "#f87171" : "var(--text-muted)",
+                  background: confirmClear ? "rgba(239,68,68,0.08)" : "transparent",
+                  border: confirmClear ? "1px solid rgba(239,68,68,0.25)" : "1px solid transparent",
+                }}
+                title="Clear all scraped data and start fresh"
+              >
+                {confirmClear ? (
+                  <>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                      <line x1="12" y1="9" x2="12" y2="13" />
+                      <line x1="12" y1="17" x2="12.01" y2="17" />
+                    </svg>
+                    Confirm clear?
+                  </>
+                ) : (
+                  <>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <polyline points="3 6 5 6 21 6" />
+                      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                      <path d="M10 11v6" />
+                      <path d="M14 11v6" />
+                      <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                    </svg>
+                    Clear data
+                  </>
+                )}
+              </button>
+            )}
+
             <button
               onClick={handleLogout}
               className="rounded-lg px-3 py-1.5 text-sm transition-colors hover:bg-white/5"
@@ -401,7 +488,7 @@ export default function ScraperPage() {
               </div>
             )}
 
-            {/* Download CSV button */}
+            {/* Download CSV + Sienna CTA */}
             {results.length > 0 && !loading && (
               <div className="glass-card p-5 animate-fade-in">
                 <div className="mb-4 flex items-center justify-between">
@@ -438,6 +525,77 @@ export default function ScraperPage() {
                   </svg>
                   Download CSV
                 </button>
+
+                {/* Clear data — secondary action in card */}
+                <button
+                  onClick={handleClearData}
+                  className="mt-3 w-full flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-medium transition-all cursor-pointer"
+                  style={{
+                    background: confirmClear ? "rgba(239,68,68,0.08)" : "rgba(255,255,255,0.03)",
+                    border: confirmClear ? "1px solid rgba(239,68,68,0.3)" : "1px solid rgba(255,255,255,0.07)",
+                    color: confirmClear ? "#f87171" : "var(--text-muted)",
+                  }}
+                >
+                  {confirmClear ? (
+                    <>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                        <line x1="12" y1="9" x2="12" y2="13" />
+                        <line x1="12" y1="17" x2="12.01" y2="17" />
+                      </svg>
+                      Click again to confirm
+                    </>
+                  ) : (
+                    <>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <polyline points="3 6 5 6 21 6" />
+                        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                        <path d="M10 11v6" />
+                        <path d="M14 11v6" />
+                        <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                      </svg>
+                      Clear all data &amp; start fresh
+                    </>
+                  )}
+                </button>
+
+                {/* Sienna CTA */}
+                <div className="sienna-cta-card mt-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div style={{
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      width: 24, height: 24, borderRadius: 6,
+                      background: "linear-gradient(135deg, #7c3aed, #c96ef5, #f06aff)",
+                    }}>
+                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                      </svg>
+                    </div>
+                    <span className="text-sm font-bold" style={{ background: "linear-gradient(135deg, #7c3aed, #c96ef5, #f06aff)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Next Step: Sienna</span>
+                  </div>
+                  <p className="text-xs mb-3" style={{ color: "var(--text-muted)" }}>
+                    Turn these {totalPosts} scraped posts into viral scroll-stopping hook lines.
+                  </p>
+                  <button
+                    onClick={() => {
+                      if (results.length > 0) {
+                        localStorage.setItem("sienna_payload", JSON.stringify({
+                          profiles: results.map(r => r.profile),
+                          posts: results.flatMap(r => r.posts),
+                        }));
+                        localStorage.removeItem("sienna_state");
+                      }
+                      router.push("/sienna");
+                    }}
+                    className="group relative flex w-full items-center justify-center gap-2 rounded-xl bg-linear-to-r from-[#7c3aed] via-[#c96ef5] to-[#f06aff] px-4 py-3.5 text-sm font-bold text-white shadow-lg shadow-purple-500/20 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-purple-500/40 active:translate-y-0 cursor-pointer overflow-hidden"
+                  >
+                    <div className="absolute inset-0 bg-white/20 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none" className="z-10 relative">
+                      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                    </svg>
+                    <span className="z-10 relative">Generate Hooks with Sienna</span>
+                  </button>
+                </div>
               </div>
             )}
           </div>

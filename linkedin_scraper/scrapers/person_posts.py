@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import re
+import random
 from typing import List, Optional
 from playwright.async_api import Page
 
@@ -87,43 +88,45 @@ class PersonPostsScraper(BaseScraper):
             await self.page.wait_for_load_state('domcontentloaded', timeout=timeout)
         except Exception as e:
             logger.debug(f"DOM load timeout: {e}")
-        
-        # Give extra time for dynamic content
-        await self.page.wait_for_timeout(3000)
-        
+
+        # Randomised extra time for dynamic content (2.5 – 5 s)
+        await self.page.wait_for_timeout(random.randint(2500, 5000))
+
         # Try scrolling to trigger lazy loading
         for attempt in range(3):
             await self._trigger_lazy_load()
-            
+
             # Check if any post URNs are present in the page
             has_posts = await self.page.evaluate('''() => {
                 return document.body.innerHTML.includes('urn:li:activity:');
             }''')
-            
+
             if has_posts:
                 logger.debug(f"Posts found after attempt {attempt + 1}")
                 return
-            
-            await self.page.wait_for_timeout(2000)
-        
+
+            await self.page.wait_for_timeout(random.randint(1800, 3500))
+
         logger.warning("Posts may not have loaded fully")
     
     async def _trigger_lazy_load(self) -> None:
-        """Scroll the page to trigger lazy loading of posts."""
-        await self.page.evaluate('''() => {
-            const scrollHeight = document.documentElement.scrollHeight;
-            const steps = 8;
-            const stepSize = Math.min(scrollHeight / steps, 400);
-            
-            for (let i = 1; i <= steps; i++) {
-                setTimeout(() => window.scrollTo(0, stepSize * i), i * 200);
-            }
-        }''')
-        await self.page.wait_for_timeout(2500)
-        
+        """Scroll the page with human-like variable speed to trigger lazy loading."""
+        scroll_height = await self.page.evaluate('document.documentElement.scrollHeight')
+        steps = random.randint(6, 12)
+        current = 0
+        for i in range(steps):
+            # Variable step size — humans don’t scroll in uniform increments
+            step = random.randint(200, 500)
+            current = min(current + step, scroll_height)
+            await self.page.evaluate(f'window.scrollTo(0, {current})')
+            await self.page.wait_for_timeout(random.randint(150, 450))
+
+        # Pause at the bottom like a human reading
+        await self.page.wait_for_timeout(random.randint(800, 1800))
+
         # Scroll back up slightly to trigger any "see more" type loading
-        await self.page.evaluate('window.scrollTo(0, 400)')
-        await self.page.wait_for_timeout(1000)
+        await self.page.evaluate(f'window.scrollTo(0, {random.randint(200, 600)})')
+        await self.page.wait_for_timeout(random.randint(600, 1200))
     
     async def _scrape_posts(self, limit: int) -> List[Post]:
         """Scrape posts with scrolling to load more."""
@@ -175,14 +178,15 @@ class PersonPostsScraper(BaseScraper):
                                 btn = buttons.nth(i)
                                 if await btn.is_visible():
                                     await btn.click(timeout=2000)
-                                    await asyncio.sleep(0.3)  # Brief pause between clicks
+                                    # Randomised pause between clicks (0.2 – 0.8 s)
+                                    await asyncio.sleep(random.uniform(0.2, 0.8))
                             except Exception:
                                 continue
                 except Exception:
                     continue
             
-            # Wait for text to expand after clicking
-            await self.page.wait_for_timeout(1000)
+            # Wait for text to expand after clicking (randomised 0.8 – 1.8 s)
+            await self.page.wait_for_timeout(random.randint(800, 1800))
             logger.debug("Finished clicking 'see more' buttons")
             
         except Exception as e:
@@ -375,17 +379,24 @@ class PersonPostsScraper(BaseScraper):
         return None
     
     async def _scroll_for_more_posts(self) -> None:
-        """Scroll down to load more posts."""
+        """Scroll down to load more posts with human-like timing."""
         try:
-            await self.page.keyboard.press('End')
-            await self.page.wait_for_timeout(2000)
-            
+            # Occasionally use keyboard End, sometimes scroll by pixels — vary the approach
+            if random.random() < 0.5:
+                await self.page.keyboard.press('End')
+            else:
+                scroll_by = random.randint(600, 1200)
+                await self.page.evaluate(f'window.scrollBy(0, {scroll_by})')
+
+            # Randomised wait: 1.5 – 3.5 s
+            await self.page.wait_for_timeout(random.randint(1500, 3500))
+
             # Also try clicking "Show more" buttons if present
             try:
                 show_more = self.page.locator('button:has-text("Show more results"), button:has-text("Show more")')
                 if await show_more.count() > 0:
                     await show_more.first.click()
-                    await self.page.wait_for_timeout(1500)
+                    await self.page.wait_for_timeout(random.randint(1200, 2500))
             except:
                 pass
         except Exception as e:
