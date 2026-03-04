@@ -111,14 +111,20 @@ function detectHookFormula(text: string): string {
   return "Strong statement opener";
 }
 
+// ── Utility: Strip emojis ───────────────────────────────────────────────────
+
+function stripEmojis(text: string): string {
+  return text.replace(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F000}-\u{1F02F}\u{1F0A0}-\u{1F0FF}\u{1F100}-\u{1F64F}\u{1F680}-\u{1F6FF}\u{1F900}-\u{1F9FF}\u{1FA70}-\u{1FAFF}\u{E0020}-\u{E007F}\u{2300}-\u{23FF}\u{2500}-\u{25FF}\u{2B00}-\u{2BFF}\u{200D}\u{FE0F}]/gu, '').replace(/\s+/g, ' ').trim();
+}
+
 // ── Extract the opening line cleanly ─────────────────────────────────────────
 
 function extractOpeningLine(text: string): string {
   const lines = text
     .split(/\n/)
-    .map((l) => l.trim())
+    .map((l) => stripEmojis(l.trim()))
     .filter(Boolean);
-  return lines[0]?.slice(0, 120) || text.slice(0, 120);
+  return lines[0]?.slice(0, 120) || stripEmojis(text).slice(0, 120);
 }
 
 // ── Core analysis — only runs on top-performing posts ─────────────────────────
@@ -411,6 +417,155 @@ function analyzeCreatorPatterns(posts: Post[]): {
   };
 }
 
+// ── Voice extraction — real linguistic fingerprint from top posts ─────────────
+
+interface CreatorVoice {
+  openingLines: string[];
+  usesIStatements: boolean;
+  usesQuestions: boolean;
+  usesEmDashes: boolean;
+  usesLists: boolean;
+  avgWordsPerSentence: number;
+  sentenceRhythm: string;
+  repeatedPhrases: string[];
+  repeatedVocabulary: string[];
+  mostUsedFormula: string;
+  mostUsedOpenerType: string;
+}
+
+function extractCreatorVoice(topPosts: TopPost[]): CreatorVoice {
+  const top5 = topPosts.slice(0, 5);
+  const openingLines = top5.map((p) => p.openingLine);
+
+  // Collect all text from top posts
+  const allText = top5.map((p) => p.text).join("\n");
+  const allSentences = allText
+    .split(/[.!?\n]+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 5);
+
+  // Detect stylistic traits
+  const usesIStatements =
+    top5.filter((p) => /^I\s/i.test(p.openingLine)).length >= 2;
+  const usesQuestions =
+    top5.filter((p) => p.openingLine.endsWith("?")).length >= 2;
+  const usesEmDashes = (allText.match(/[—–]/g) || []).length >= 3;
+  const usesLists =
+    top5.filter((p) =>
+      /^\d+[\.\)]\s/m.test(p.text),
+    ).length >= 2;
+
+  // Sentence rhythm
+  const wordCounts = allSentences.map((s) => s.split(/\s+/).length);
+  const avgWordsPerSentence = wordCounts.length
+    ? Math.round(
+        wordCounts.reduce((a, b) => a + b, 0) / wordCounts.length,
+      )
+    : 10;
+
+  let sentenceRhythm: string;
+  if (avgWordsPerSentence <= 6)
+    sentenceRhythm = `Ultra-short punchy lines, averaging ${avgWordsPerSentence} words per sentence with hard line breaks after each idea`;
+  else if (avgWordsPerSentence <= 10)
+    sentenceRhythm = `Short, rhythmic sentences averaging ${avgWordsPerSentence} words — punchy with frequent line breaks`;
+  else if (avgWordsPerSentence <= 16)
+    sentenceRhythm = `Medium-length structured sentences averaging ${avgWordsPerSentence} words, mixing short punches with fuller explanations`;
+  else
+    sentenceRhythm = `Longer narrative sentences averaging ${avgWordsPerSentence} words, storytelling-heavy with flowing paragraphs`;
+
+  // Extract repeated vocabulary (words appearing in 2+ top posts)
+  const postWordSets = top5.map((p) => {
+    const words = p.text
+      .toLowerCase()
+      .replace(/[^a-z\s'-]/g, " ")
+      .split(/\s+/)
+      .filter((w) => w.length > 4);
+    return new Set(words);
+  });
+
+  const vocabFreq: Record<string, number> = {};
+  for (const ws of postWordSets) {
+    Array.from(ws).forEach((w) => {
+      vocabFreq[w] = (vocabFreq[w] || 0) + 1;
+    });
+  }
+  const repeatedVocabulary = Object.entries(vocabFreq)
+    .filter(([, count]) => count >= 2)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 12)
+    .map(([word]) => word);
+
+  // Extract repeated 2-3 word phrases from actual post text
+  const phraseFreq: Record<string, number> = {};
+  for (const post of top5) {
+    const words = post.text
+      .toLowerCase()
+      .replace(/[^a-z\s'-]/g, " ")
+      .split(/\s+/)
+      .filter(Boolean);
+    for (let i = 0; i < words.length - 1; i++) {
+      const bi = `${words[i]} ${words[i + 1]}`;
+      if (bi.length > 6) phraseFreq[bi] = (phraseFreq[bi] || 0) + 1;
+      if (i < words.length - 2) {
+        const tri = `${words[i]} ${words[i + 1]} ${words[i + 2]}`;
+        if (tri.length > 10) phraseFreq[tri] = (phraseFreq[tri] || 0) + 1;
+      }
+    }
+  }
+  const repeatedPhrases = Object.entries(phraseFreq)
+    .filter(([, count]) => count >= 2)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([phrase]) => phrase);
+
+  // Most-used hook formula
+  const formulaCounts: Record<string, number> = {};
+  for (const p of topPosts) {
+    formulaCounts[p.hookFormula] = (formulaCounts[p.hookFormula] || 0) + 1;
+  }
+  const mostUsedFormula = Object.entries(formulaCounts)
+    .sort((a, b) => b[1] - a[1])[0]?.[0] || "Strong statement opener";
+
+  // Most-used opener type (first word category)
+  const openerTypes: Record<string, number> = {};
+  for (const p of top5) {
+    const firstWord = p.openingLine.split(/\s/)[0]?.toLowerCase() || "";
+    let openerType = "statement";
+    if (/^(i|i'm|i've|i'd)$/i.test(firstWord)) openerType = "I-statement";
+    else if (/^(why|what|how|when|where|who|do|does|did|is|are|can|would|should)$/i.test(firstWord)) openerType = "question";
+    else if (/^(stop|don't|never|avoid|quit)$/i.test(firstWord)) openerType = "directive";
+    else if (/^\d/.test(firstWord)) openerType = "number-lead";
+    else if (/^(the|this|that|here)$/i.test(firstWord)) openerType = "declarative";
+    openerTypes[openerType] = (openerTypes[openerType] || 0) + 1;
+  }
+  const mostUsedOpenerType = Object.entries(openerTypes)
+    .sort((a, b) => b[1] - a[1])[0]?.[0] || "statement";
+
+  return {
+    openingLines,
+    usesIStatements,
+    usesQuestions,
+    usesEmDashes,
+    usesLists,
+    avgWordsPerSentence,
+    sentenceRhythm,
+    repeatedPhrases,
+    repeatedVocabulary,
+    mostUsedFormula,
+    mostUsedOpenerType,
+  };
+}
+
+// ── Extract the first N non-empty lines from post text ────────────────────────
+
+function extractFirstLines(text: string, count: number): string[] {
+  return text
+    .split(/\n/)
+    .map((l) => stripEmojis(l.trim()))
+    .filter(Boolean)
+    .slice(0, count);
+}
+
 // ── Hook generation — derived from actual top posts ──────────────────────────
 
 function generateHooks(
@@ -427,20 +582,48 @@ function generateHooks(
   const posName = isMulti ? "These top creators'" : `${name}'s`;
   const pillars = pattern.contentPillars;
   const keywords = pattern.topPostKeywords;
-  const authority = pattern.authoritySignals;
 
   const pillar0 = pillars[0] || "their niche";
   const pillar1 = pillars[1] || "growth";
-  const keyword0 = keywords[0] || "success";
-  const keyword1 = keywords[1] || "strategy";
 
   const topPost = topPosts[0];
   const secondPost = topPosts[1];
   const thirdPost = topPosts[2];
 
-  // ── Formula-derived hooks (grounded in actual top posts) ─────────────────
-  //    Each hook references what formula the real viral posts used,
-  //    making the output actionable and data-driven.
+  // ── Voice extraction ────────────────────────────────────────────────────
+  const voice = extractCreatorVoice(topPosts);
+  const maxEngagement = topPost?.engagementScore || 1;
+
+  // Helper: dynamic engagement score from real data
+  function calcScore(sourcePost: TopPost | null, formulaMatch: boolean, openerMatch: boolean): number {
+    let base = sourcePost
+      ? Math.round((sourcePost.engagementScore / maxEngagement) * 100)
+      : Math.round((pattern.avgEngagement / maxEngagement) * 70);
+    if (formulaMatch) base += 5;
+    if (openerMatch) base += 3;
+    return Math.min(99, Math.max(50, base));
+  }
+
+  // Helper: check if a post's formula matches the creator's most-used
+  function isFormulaMatch(post: TopPost): boolean {
+    return post.hookFormula === voice.mostUsedFormula;
+  }
+
+  // Helper: check if a post's opener type matches the creator's most-used
+  function isOpenerMatch(post: TopPost): boolean {
+    const firstWord = post.openingLine.split(/\s/)[0]?.toLowerCase() || "";
+    let openerType = "statement";
+    if (/^(i|i'm|i've|i'd)$/i.test(firstWord)) openerType = "I-statement";
+    else if (/^(why|what|how|when|where|who|do|does|did|is|are|can|would|should)$/i.test(firstWord)) openerType = "question";
+    else if (/^(stop|don't|never|avoid|quit)$/i.test(firstWord)) openerType = "directive";
+    else if (/^\d/.test(firstWord)) openerType = "number-lead";
+    else if (/^(the|this|that|here)$/i.test(firstWord)) openerType = "declarative";
+    return openerType === voice.mostUsedOpenerType;
+  }
+
+  // Collect real phrases for use in hooks
+  const realPhraseSample = voice.repeatedPhrases.slice(0, 3).join('", "');
+  const realVocabSample = voice.repeatedVocabulary.slice(0, 5).join(", ");
 
   const hooks: HookVariant[] = [];
 
@@ -448,10 +631,10 @@ function generateHooks(
   if (topPost) {
     hooks.push({
       type: `Mirror: ${topPost.hookFormula}`,
-      hook: buildMirrorHook(topPost, name, posName, keyword0, pillar0),
-      rationale: `Directly mirrors the hook formula of ${posName} highest-engagement post (${topPost.engagementScore.toLocaleString()} engagement score). Proven to work for this creator's audience.`,
-      emotionalTrigger: "Pattern recognition + proven formula confidence",
-      engagementScore: 97,
+      hook: buildMirrorHook(topPost, name, posName, voice),
+      rationale: `Structurally mirrors the real opening of ${posName} #1 post ("${topPost.openingLine.slice(0, 60)}…"). ${topPost.engagementScore.toLocaleString()} engagement score — their highest performer.`,
+      emotionalTrigger: "Mirrors their most successful, proven post opener",
+      engagementScore: calcScore(topPost, isFormulaMatch(topPost), isOpenerMatch(topPost)),
       sourcePostUrl: topPost.postUrl,
       derivedFrom: `#1 post · ${topPost.reactionsCount.toLocaleString()} reactions`,
     });
@@ -461,171 +644,190 @@ function generateHooks(
   if (secondPost) {
     hooks.push({
       type: `Mirror: ${secondPost.hookFormula}`,
-      hook: buildMirrorHook(secondPost, name, posName, keyword1, pillar1),
-      rationale: `Adapts the structural formula from ${posName} second-highest performer. Two different formulas working = the audience responds to variety — use both.`,
-      emotionalTrigger: "Curiosity + analytical insight",
-      engagementScore: 94,
+      hook: buildMirrorHook(secondPost, name, posName, voice),
+      rationale: `Adapts the real structure from ${posName} #2 post ("${secondPost.openingLine.slice(0, 60)}…"). This formula also resonates with their audience — two proven patterns worth combining.`,
+      emotionalTrigger: "Uses their second most reliable hook structure",
+      engagementScore: calcScore(secondPost, isFormulaMatch(secondPost), isOpenerMatch(secondPost)),
       sourcePostUrl: secondPost.postUrl,
       derivedFrom: `#2 post · ${secondPost.reactionsCount.toLocaleString()} reactions`,
     });
   }
 
-  // 3. Blend of top-2 formulas into one
+  // 3. Blend of top-2 formulas
   if (topPost && secondPost) {
+    const isSameFormula = topPost.hookFormula === secondPost.hookFormula;
+    const insight = buildPatternInsight(topPost, secondPost, voice);
+    const blendScore = calcScore(
+      topPost,
+      isSameFormula,
+      isOpenerMatch(topPost),
+    );
     hooks.push({
-      type: "Hybrid Formula (Top 2 Combined)",
-      hook: `${posName} two best posts both started differently — one with ${topPost.hookFormula.toLowerCase()}, one with ${secondPost.hookFormula.toLowerCase()}.\n\nThe pattern underneath both:\n\n${buildPatternInsight(topPost, secondPost, keyword0)}`,
-      rationale: `Cross-analyzing multiple viral posts reveals the deeper formula. Combining two proven hooks creates a richer, stickier opener.`,
-      emotionalTrigger: "Meta-insight + intellectual satisfaction",
-      engagementScore: 92,
+      type: isSameFormula
+        ? `Proven Framework: ${topPost.hookFormula}`
+        : "Hybrid Formula (Top 2 Combined)",
+      hook: isSameFormula
+        ? `${posName} top two posts both opened the same way:\n\n#1: "${topPost.openingLine}"\n#2: "${secondPost.openingLine}"\n\nThe pattern underneath both:\n\n${insight}`
+        : `${posName} two best posts started differently:\n\n#1 (${topPost.hookFormula.toLowerCase()}): "${topPost.openingLine}"\n#2 (${secondPost.hookFormula.toLowerCase()}): "${secondPost.openingLine}"\n\nThe pattern underneath both:\n\n${insight}`,
+      rationale: isSameFormula
+        ? `Both top posts literally use the same opening structure — this isn't coincidence, it's the creator's proven signature move.`
+        : `Two different formulas, same audience response. The shared linguistic DNA reveals the deeper pattern that drives engagement.`,
+      emotionalTrigger: "Combines elements from their top two best-performing hooks",
+      engagementScore: Math.min(99, blendScore - 2),
       derivedFrom: `Top 2 posts combined`,
     });
   }
 
-  // 4. Engagement comparison — data driven
+  // 4. Data-driven contrast with real numbers
   hooks.push({
     type: "Data-Driven Contrast",
-    hook: `${posName} avg post gets ${pattern.avgEngagement.toLocaleString()} engagement.\n\nThe top ${pattern.topPostsUsed} posts? ${topPost ? (topPost.engagementScore * 2).toLocaleString() : "3×"} that.\n\nHere's the structural difference between their average and viral posts:`,
-    rationale: `Contrast between average and viral creates the sharpest proof of pattern effectiveness. Uses real numbers from this creator's data.`,
-    emotionalTrigger: "Data credibility + FOMO",
-    engagementScore: 91,
+    hook: `${posName} average post gets ${pattern.avgEngagement.toLocaleString()} engagement.\n\nTheir top post? ${topPost ? topPost.engagementScore.toLocaleString() : "10×"} — that's ${topPost ? Math.round(topPost.engagementScore / Math.max(pattern.avgEngagement, 1)) + "×" : "10×"} the average.\n\nThe difference isn't topic. It's the opening line structure.\n\nTheir viral openers use words like "${realVocabSample}" — the same vocabulary their audience already resonates with.`,
+    rationale: `Uses real engagement ratios from the creator's own data. Highlights actual vocabulary patterns from their top posts.`,
+    emotionalTrigger: "Shows clear proof of what words and formats get the most attention",
+    engagementScore: calcScore(topPost || null, false, false),
     derivedFrom: `${pattern.totalPostsAnalyzed} posts analyzed`,
   });
 
-  // 5. Opening line steal (show the exact first line of viral post)
+  // 5. Opening line transplant — verbatim from top post
   if (topPost) {
+    const firstLines = extractFirstLines(topPost.text, 3);
     hooks.push({
       type: "Opening Line Transplant",
-      hook: `${posName} most viral post started like this:\n\n"${topPost.openingLine}"\n\n${topPost.reactionsCount.toLocaleString()} reactions later...\n\nHere's why that specific opening line worked — and how to write yours the same way:`,
-      rationale: `Quoting an actual viral opener anchors credibility. Teaching the formula creates value — and makes you the authority who decoded it.`,
-      emotionalTrigger: "Curiosity + reverse-engineering desire",
-      engagementScore: 90,
+      hook: `${posName} most viral post started exactly like this:\n\n${firstLines.map((l) => `"${l}"`).join("\n")}\n\n${topPost.reactionsCount.toLocaleString()} reactions.\n\nThat opening uses a ${topPost.hookFormula.toLowerCase()} — ${voice.usesEmDashes ? "with their signature em-dash rhythm" : voice.usesQuestions ? "leveraging the question pattern they keep returning to" : "their most natural structural instinct"}.\n\nHere's how to adapt this exact framework:`,
+      rationale: `Verbatim quote of the actual viral opener. The ${topPost.hookFormula} is the real formula detected from this specific post.`,
+      emotionalTrigger: "Draws attention by directly quoting a highly successful opening line",
+      engagementScore: calcScore(topPost, isFormulaMatch(topPost), true),
       sourcePostUrl: topPost.postUrl,
       derivedFrom: `#1 post · ${topPost.hookFormula}`,
     });
   }
 
-  // 6. Contrarian opener — drawn from found emotion terms
-  hooks.push({
-    type: "Contrarian Opener",
-    hook: `Everyone says focus on ${keyword0}.\n\n${posName} data says otherwise.\n\nTheir highest-performing ${pillar0} posts don't lead with ${keyword0}. They lead with something else entirely:`,
-    rationale:
-      "Challenging the conventional advice forces the reader to pause and question their assumptions — the most reliable scroll-stop mechanism.",
-    emotionalTrigger: "Intellectual curiosity + contrarian pull",
-    engagementScore: 88,
-    derivedFrom: `Pattern from top ${pattern.topPostsUsed} posts`,
-  });
+  // 6. Contrarian — grounded in real data patterns
+  if (topPost) {
+    const topFormulaDesc = voice.mostUsedFormula.toLowerCase();
+    hooks.push({
+      type: "Contrarian Opener",
+      hook: `Everyone says LinkedIn hooks need to be clever.\n\n${posName} top ${pattern.topPostsUsed} posts disagree.\n\nTheir most-used opener? A ${topFormulaDesc}.\n\nNo tricks. Just: "${topPost.openingLine}"\n\n${topPost.reactionsCount.toLocaleString()} reactions. The simplicity IS the formula.`,
+      rationale: `Contrarian frame built on real data — the creator's actual most-used formula (${voice.mostUsedFormula}) and their real #1 opening line.`,
+      emotionalTrigger: "Hooks the reader by going against common advice",
+      engagementScore: calcScore(topPost, true, isOpenerMatch(topPost)),
+      derivedFrom: `Pattern from top ${pattern.topPostsUsed} posts`,
+    });
+  }
 
-  // 7. Specificity hook (number of posts studied)
+  // 7. Research authority — with real specifics
   hooks.push({
     type: "Research Authority",
-    hook: `I studied ${pattern.totalPostsAnalyzed} posts from ${name}.\n\nOnly ${pattern.topPostsUsed} of them drove 80% of total engagement.\n\nHere's what made those ${pattern.topPostsUsed} posts structurally different from the rest:`,
-    rationale: `Specific numbers signal rigour. The Pareto observation (few posts = most engagement) creates immediate intrigue about what the outliers did differently.`,
-    emotionalTrigger: "Trust from thoroughness + FOMO on the formula",
-    engagementScore: 89,
+    hook: `I studied ${pattern.totalPostsAnalyzed} posts from ${name}.\n\nOnly ${pattern.topPostsUsed} drove 80%+ of total engagement.\n\nThose ${pattern.topPostsUsed} posts share ${voice.usesIStatements ? '"I" statements' : voice.usesQuestions ? "question openers" : voice.usesLists ? "numbered lists" : "direct statement openers"}, ${voice.sentenceRhythm.split(",")[0].toLowerCase()}, and vocabulary like "${realVocabSample}".\n\nHere's the exact structural breakdown:`,
+    rationale: `Specific numbers + real stylistic observations from the creator's actual writing, not generic claims.`,
+    emotionalTrigger: "Builds trust through detailed analysis of what actually works",
+    engagementScore: calcScore(topPost || null, false, false),
     derivedFrom: `All ${pattern.totalPostsAnalyzed} posts`,
   });
 
-  // 8. Pattern interrupt
-  hooks.push({
-    type: "Pattern Interrupt",
-    hook: `Stop.\n\nBefore you write your next ${pillar0} post — read how ${name} structures theirs.\n\nI analysed their top ${pattern.topPostsUsed} posts. This is what I found:`,
-    rationale: `The directive 'Stop' is a genuine pattern interrupt that breaks scroll inertia. Scarcity of the insight ('I found') drives completion reading.`,
-    emotionalTrigger: "Urgency + exclusive insight",
-    engagementScore: 87,
-    derivedFrom: `Top ${pattern.topPostsUsed} posts`,
-  });
-
-  // 9. Story hook grounded in top post context
+  // 8. Pattern interrupt — with real post reference
   if (topPost) {
     hooks.push({
+      type: "Pattern Interrupt",
+      hook: `Stop.\n\nBefore your next ${pillar0} post — look at this opener:\n\n"${topPost.openingLine}"\n\n${topPost.reactionsCount.toLocaleString()} reactions. ${topPost.commentsCount.toLocaleString()} comments.\n\n${name} didn't get lucky. Their top ${pattern.topPostsUsed} posts all follow ${voice.mostUsedFormula === topPost.hookFormula ? "this exact" : "a similar"} structural pattern:`,
+      rationale: `The 'Stop' directive is a real pattern interrupt. Anchored to a verbatim opening line and real engagement numbers from the source post.`,
+      emotionalTrigger: "Breaks the natural scrolling pattern to force the user to pay attention",
+      engagementScore: calcScore(topPost, isFormulaMatch(topPost), true),
+      derivedFrom: `Top ${pattern.topPostsUsed} posts`,
+    });
+  }
+
+  // 9. Transformation story grounded in real post specifics
+  if (topPost) {
+    const realFirstLine = extractFirstLines(topPost.text, 1)[0] || topPost.openingLine;
+    hooks.push({
       type: "Transformation Story",
-      hook: `Before I found ${posName} content strategy, I was posting about ${keyword0} every week.\n\nZero traction. Same 10 reactions.\n\nThen I reverse-engineered their top ${pattern.topPostsUsed} posts. Everything changed:`,
-      rationale:
-        "The before/after transformation arc is the most primally satisfying narrative structure. Readers project themselves into the 'before' state, creating urgency.",
-      emotionalTrigger: "Empathy + aspiration + hope",
-      engagementScore: 86,
+      hook: `I used to open every ${pillar0} post the same way.\n\nThen I saw ${posName} opener:\n\n"${realFirstLine}"\n\n${topPost.reactionsCount.toLocaleString()} reactions on that post alone.\n\nI reverse-engineered their top ${pattern.topPostsUsed} posts. The rhythm is specific: ${voice.sentenceRhythm.split(",")[0].toLowerCase()}.\n\nEverything changed:`,
+      rationale: `Before/after narrative anchored to the creator's real opening line and detected sentence rhythm — not a generic template.`,
+      emotionalTrigger: "Uses a relatable before-and-after story to build interest",
+      engagementScore: calcScore(topPost, false, isOpenerMatch(topPost)),
       derivedFrom: `Top posts framework`,
     });
   }
 
-  // 10. FOMO hook
+  // 10. FOMO hook — with real vocab
   hooks.push({
     type: "FOMO / Urgency",
-    hook: `While most ${pillar0} creators are still posting generic content…\n\n${name} quietly built a formula that averages ${pattern.avgEngagement.toLocaleString()} engagement per post.\n\nThe gap is widening. Here's the exact formula:`,
-    rationale:
-      "Competitive urgency drives action. The contrast between 'most creators' and this specific outlier makes the reader feel behind — and motivates them to close the gap.",
-    emotionalTrigger: "Competitive anxiety + desire to catch up",
-    engagementScore: 85,
+    hook: `While most ${pillar0} creators are guessing what works…\n\n${name} has a formula averaging ${pattern.avgEngagement.toLocaleString()} engagement.\n\nTheir secret? ${voice.usesIStatements ? 'Personal "I" openers' : voice.usesQuestions ? "Question-driven hooks" : voice.usesLists ? "Numbered list structures" : "Direct statement leads"} + vocabulary their audience already trusts: "${realVocabSample}".\n\nThe gap is widening:`,
+    rationale: `Competitive FOMO built on real engagement averages and the creator's actual detected writing patterns — not generic advice.`,
+    emotionalTrigger: "Creates a sense of urgency to use the most effective methods right now",
+    engagementScore: calcScore(null, false, false),
     derivedFrom: `Avg. engagement data`,
   });
 
-  // 11. Bold claim
-  hooks.push({
-    type: "Bold Claim",
-    hook: `This is the best ${pillar0} content strategy on LinkedIn right now.\n\nI've compared dozens of creators. ${posName} top posts are structurally different — and the engagement numbers prove it.\n\nHere's the framework (apply it):`,
-    rationale:
-      "Superlative claims demand verification. 'The numbers prove it' shifts from opinion to evidence — increasing reader trust.",
-    emotionalTrigger: "Validation-seeking + resource acquisition",
-    engagementScore: 84,
-    derivedFrom: `Comparative post analysis`,
-  });
+  // 11. Bold claim — with real evidence
+  if (topPost) {
+    hooks.push({
+      type: "Bold Claim",
+      hook: `This is the strongest ${pillar0} hook formula on LinkedIn right now.\n\nProof: ${posName} top post — "${topPost.openingLine.slice(0, 70)}…"\n\n${topPost.reactionsCount.toLocaleString()} reactions. ${topPost.commentsCount.toLocaleString()} comments. ${topPost.repostsCount.toLocaleString()} reposts.\n\nI broke down the structural pattern. Here's the framework:`,
+      rationale: `Superlative claim backed by the real opening line and exact engagement metrics from the source post.`,
+      emotionalTrigger: "Gathers immediate attention and validates it with proof",
+      engagementScore: calcScore(topPost, false, false),
+      sourcePostUrl: topPost.postUrl,
+      derivedFrom: `Comparative post analysis`,
+    });
+  }
 
-  // 12. Third post formula (if available)
+  // 12. Third post formula
   if (thirdPost) {
     hooks.push({
       type: `Formula: ${thirdPost.hookFormula}`,
-      hook: buildMirrorHook(thirdPost, name, posName, keyword0, pillar0),
-      rationale: `Derived from ${posName} 3rd highest-performing post. Using the ${thirdPost.hookFormula} structure — a proven formula for this specific audience.`,
-      emotionalTrigger: "Familiarity + proven trust",
-      engagementScore: 83,
+      hook: buildMirrorHook(thirdPost, name, posName, voice),
+      rationale: `Derived from ${posName} #3 post ("${thirdPost.openingLine.slice(0, 60)}…"). The ${thirdPost.hookFormula} structure works repeatedly for this audience.`,
+      emotionalTrigger: "Uses a consistent, proven structure that is known to perform well",
+      engagementScore: calcScore(thirdPost, isFormulaMatch(thirdPost), isOpenerMatch(thirdPost)),
       sourcePostUrl: thirdPost.postUrl,
       derivedFrom: `#3 post · ${thirdPost.reactionsCount.toLocaleString()} reactions`,
     });
   }
 
   const toneMap: Record<string, (h: HookVariant) => HookVariant> = {
-    professional: (h) => ({
-      ...h,
-      hook: `${h.hook
-        .replace(/\bsteal\b/gi, "leverage")
-        .replace(/\bkill\b/gi, "outperform")}`,
-    }),
+    professional: (h) => h,
     bold: (h) => ({
       ...h,
-      hook: `[Bold Take]\n${h.hook}\n\nNo excuses. Period. 🔥`,
-      engagementScore: Math.min(100, h.engagementScore + 3),
+      engagementScore: Math.min(99, h.engagementScore + 2),
     }),
-    conversational: (h) => ({
-      ...h,
-      hook: `[Quick thought]\n${h.hook.replace(
-        /\bThe formula:\b/gi,
-        "What's the secret? It's simple:",
-      )}`,
-    }),
+    conversational: (h) => h,
     inspirational: (h) => ({
       ...h,
-      hook: `[Growth Mindset]\n${h.hook}\n\nRemember: your potential is limitless. Keep building. 🚀`,
-      engagementScore: Math.min(100, h.engagementScore + 1),
+      engagementScore: Math.min(99, h.engagementScore + 1),
     }),
   };
 
   const toneProcessor = toneMap[tone] || ((h: HookVariant) => h);
   const processed = hooks.map(toneProcessor);
 
-  // Inject Dina AI Prompt for each hook
+  // Inject Dina AI Prompt — now with real voice data
   const finalHooks = processed.map((h) => {
-    // Extract the original opener if we have a direct reference
     const matchedPost = h.sourcePostUrl
       ? topPosts.find((p) => p.postUrl === h.sourcePostUrl)
       : null;
-    let openerInstruction = `- Write a NEW post starting with this exact proven framework: "${h.type}"`;
 
+    // Real first sentence of the source post for structural reference
+    const realFirstSentence = matchedPost
+      ? extractFirstLines(matchedPost.text, 1)[0] || matchedPost.openingLine
+      : topPost
+        ? extractFirstLines(topPost.text, 1)[0] || topPost.openingLine
+        : "";
+
+    // Real phrases from top posts for Dina to reference
+    const realPhrasesForDina = voice.repeatedPhrases.slice(0, 3);
+    const realVocabForDina = voice.repeatedVocabulary.slice(0, 5);
+
+    let openerInstruction = `- Write a NEW post using this proven framework: "${h.type}"`;
+    if (realFirstSentence) {
+      openerInstruction += `\n- STRUCTURAL REFERENCE (real viral opener, verbatim): "${realFirstSentence}"`;
+      openerInstruction += `\n- Mirror the STRUCTURE of that opener (sentence length, word choice pattern, emotional beat) — but adapt the topic to MY content below.`;
+    }
     if (matchedPost) {
-      openerInstruction += `\n- Here is the actual original viral opener for reference: "${matchedPost.openingLine}"\n- Adapt this hook structure for MY topic below. DO NOT mention the original creator's name.`;
+      openerInstruction += `\n- DO NOT mention the original creator's name.`;
     }
 
-    // Clean up the meta commentary so the bot understands the logic instructions plainly
     const cleanLogic = h.hook
       .replace(/\[.*?\]\n/g, "")
       .replace(/\n\n/g, " ")
@@ -642,9 +844,15 @@ ${openerInstruction}
 • Psychological Breakdown (Apply This Logic): ${cleanLogic}
 • Core Emotional Trigger to Hit: ${h.rationale}
 
+[CREATOR VOICE PROFILE]
+• Sentence Rhythm: ${voice.sentenceRhythm}
+• Signature Traits: ${[voice.usesIStatements && '"I" statement openers', voice.usesQuestions && "question-driven hooks", voice.usesEmDashes && "em-dash rhythm", voice.usesLists && "numbered list structures"].filter(Boolean).join(", ") || "direct statement style"}
+• Real Phrases From Their Top Posts (use sparingly as inspiration): "${realPhrasesForDina.join('", "')}"
+• Recurring Vocabulary: ${realVocabForDina.join(", ")}
+
 [CONTENT DETAILS]
 • Primary Topic / Pillar: ${pillar0}
-• Required Keywords: ${keywords.slice(0, 3).join(", ")}
+• Required Keywords: ${pattern.topPostKeywords.slice(0, 3).join(", ")}
 • Target Tone: ${tone.toUpperCase()}
 • Structural Style: ${pattern.writingStyle}
 
@@ -659,7 +867,7 @@ ${openerInstruction}
 [SCENE DETAILS]
 • Subject Matter: A candid, natural-looking professional scene (e.g., diverse executives, modern workspaces, abstract data) evoking the emotion of "${h.emotionalTrigger}".
 • Aesthetic: Cinematic lighting, 8k resolution, highly detailed, photorealistic, premium corporate/abstract lifestyle. Minimalist and sleek.
-• Context: Weave subtle visual metaphors representing [ ${keywords.slice(0, 3).join(", ")} ] into the scene without using text.
+• Context: Weave subtle visual metaphors representing [ ${pattern.topPostKeywords.slice(0, 3).join(", ")} ] into the scene without using text.
 • Camera Settings: Shot on Canon EOS R5, shallow depth of field, dramatic shadows, sharp focus on the main subject.
 
 [CRITICAL CONSTRAINTS (MANDATORY)]
@@ -679,43 +887,128 @@ Ensure the final result looks exactly like an ultra-high-end, candid stock photo
     .slice(0, hookCount);
 }
 
-// ── Hook builders for specific formulas ──────────────────────────────────────
+// ── Hook builders — structurally mirrors real post openings ───────────────────
 
 function buildMirrorHook(
   post: TopPost,
   name: string,
   posName: string,
-  keyword: string,
-  pillar: string,
+  voice: CreatorVoice,
 ): string {
-  switch (post.hookFormula) {
-    case "Personal story / vulnerability":
-      return `I made a ${keyword} mistake last year that cost me 3 months.\n\n${name} made the same kind of mistake — but turned it into their most viral post.\n\nHere's what they wrote, and the formula behind it:`;
-    case "Numbered list promise":
-      return `${name} posted a list about ${pillar}.\n\nIt got ${post.reactionsCount.toLocaleString()}+ reactions.\n\nI broke down why each point worked — and turned it into a reusable framework:`;
-    case "Pattern interrupt / directive":
-      return `Stop creating ${keyword} content the old way.\n\n${posName} most viral posts don't start with a lesson. They start with a command.\n\nHere's the structural reason why commands outperform questions as openers:`;
-    case "Hot take / contrarian":
-      return `Unpopular opinion:\n\nMost ${pillar} advice is noise.\n\n${name} proves this every week — with posts that challenge the defaults and rack up ${post.reactionsCount.toLocaleString()}+ reactions. Here's their actual contrarian formula:`;
-    case "Question hook":
-      return `Why does ${posName} ${pillar} content consistently outperform everyone else?\n\nIt's not the topic. It's not even the visuals.\n\nIt's the structure of their opening question. Here's how to replicate it:`;
-    case "Reveal / secret frame":
-      return `The real reason ${posName} posts on ${keyword} go viral:\n\nIt's not what they say.\n\nIt's how they frame the opening. Here's the exact reveal structure they use — and why it works:`;
-    case "Statistic / data lead":
-      return `${name} opened their best post with a single number.\n\n${post.reactionsCount.toLocaleString()} people reacted.\n\nData-led hooks are the most powerful on LinkedIn. Here's the template they used:`;
-    case "Contrast against the crowd":
-      return `Most ${pillar} creators post the same things.\n\n${name} posts the opposite — and their engagement shows it.\n\nHere's the contrasting structure that made their top post break through:`;
-    default:
-      return `${posName} most viral ${pillar} post used a deceptively simple opener.\n\n${post.reactionsCount.toLocaleString()} reactions.\n\nHere's the exact hook formula, broken down line by line:`;
+  // Extract the actual first 2-3 lines from the source post
+  const realLines = extractFirstLines(post.text, 3);
+  const line1 = realLines[0] || post.openingLine;
+  const line2 = realLines[1] || "";
+  const line3 = realLines[2] || "";
+
+  // Count words in the real opening to mirror the rhythm
+  const line1Words = line1.split(/\s+/).length;
+  const isShort = line1Words <= 8;
+
+  // Build the mirror hook by showing the real structure and teaching it
+  let mirror = `${posName} post that got ${post.reactionsCount.toLocaleString()} reactions opened with:\n\n"${line1}"`;
+
+  if (line2) {
+    mirror += `\n"${line2}"`;
   }
+  if (line3) {
+    mirror += `\n"${line3}"`;
+  }
+
+  // Add structural analysis based on what's actually in the opening
+  mirror += `\n\nThat's a ${post.hookFormula.toLowerCase()}`;
+  mirror += isShort
+    ? ` — ${line1Words} words, no filler, instant tension.`
+    : ` — ${line1Words} words setting the full frame before the payoff.`;
+
+  // Reference the voice patterns detected across posts
+  if (voice.usesEmDashes && line1.includes("—")) {
+    mirror += `\n\nNotice the em-dash. ${name} uses this rhythm consistently across their top posts.`;
+  } else if (voice.usesIStatements && /^I\s/i.test(line1)) {
+    mirror += `\n\n${name} opens with "I" — personal, vulnerable, immediate. They do this across their top posts.`;
+  } else if (voice.usesQuestions && line1.endsWith("?")) {
+    mirror += `\n\n${name} opens with a question — pulling the reader into dialogue. This is their signature pattern.`;
+  } else if (voice.usesLists && /^\d/.test(line1)) {
+    mirror += `\n\n${name} leads with a number — setting clear expectations. Their audience expects this and engages with it.`;
+  }
+
+  mirror += `\n\nHere's how to adapt this exact structural pattern:`;
+
+  return mirror;
 }
 
 function buildPatternInsight(
   postA: TopPost,
   postB: TopPost,
-  keyword: string,
+  voice: CreatorVoice,
 ): string {
-  return `Both create immediate tension in the first line — either through contrast, data, or a direct challenge.\n\nNeither starts with "I want to share…" or "Here are my thoughts on ${keyword}."\n\nThe formula: open with tension → promise resolution → deliver through a structured breakdown.`;
+  const lineA = postA.openingLine;
+  const lineB = postB.openingLine;
+
+  // Analyze actual structural similarities
+  const similarities: string[] = [];
+
+  // Compare sentence length
+  const wordsA = lineA.split(/\s+/).length;
+  const wordsB = lineB.split(/\s+/).length;
+  if (Math.abs(wordsA - wordsB) <= 3) {
+    similarities.push(
+      `Both openers are nearly the same length (${wordsA} vs ${wordsB} words) — this creator's audience responds to ${wordsA <= 8 ? "short, punchy" : "medium-length, structured"} first lines`,
+    );
+  }
+
+  // Compare first word / opener type
+  const firstWordA = lineA.split(/\s/)[0]?.toLowerCase() || "";
+  const firstWordB = lineB.split(/\s/)[0]?.toLowerCase() || "";
+  if (firstWordA === firstWordB) {
+    similarities.push(
+      `Both literally start with the same word: "${firstWordA}" — this is a conscious signature, not coincidence`,
+    );
+  } else if (
+    (/^(i|i'm|i've)$/i.test(firstWordA) && /^(i|i'm|i've)$/i.test(firstWordB))
+  ) {
+    similarities.push(
+      `Both open with a personal "I" statement — vulnerability as a scroll-stop mechanism`,
+    );
+  }
+
+  // Check for shared punctuation patterns
+  const bothUseEmDash = lineA.includes("—") && lineB.includes("—");
+  const bothEndQuestion = lineA.endsWith("?") && lineB.endsWith("?");
+  if (bothUseEmDash) {
+    similarities.push(`Both use an em-dash to create a mid-line pause — building tension before the reveal`);
+  }
+  if (bothEndQuestion) {
+    similarities.push(`Both end with a question mark — pulling the reader into a dialogue loop`);
+  }
+
+  // Check for shared vocabulary from the actual lines
+  const wordsArrA = lineA.toLowerCase().replace(/[^a-z\s]/g, "").split(/\s+/).filter((w) => w.length > 3);
+  const wordsSetB = new Set(lineB.toLowerCase().replace(/[^a-z\s]/g, "").split(/\s+/).filter((w) => w.length > 3));
+  const shared = wordsArrA.filter((w) => wordsSetB.has(w)).filter((w, i, arr) => arr.indexOf(w) === i);
+  if (shared.length > 0) {
+    similarities.push(
+      `Shared vocabulary across both openers: "${shared.slice(0, 3).join('", "')}" — these are words this audience trusts`,
+    );
+  }
+
+  // Emotional beat comparison
+  const emotionalA = /\b(never|always|stop|mistake|fail|wrong|truth|secret)\b/i.test(lineA);
+  const emotionalB = /\b(never|always|stop|mistake|fail|wrong|truth|secret)\b/i.test(lineB);
+  if (emotionalA && emotionalB) {
+    similarities.push(`Both hit an emotional trigger word in the first line — creating instant psychological tension`);
+  }
+
+  // Fallback: if no structural similarities found, describe the contrast
+  if (similarities.length === 0) {
+    return `Post A opens with: "${lineA.slice(0, 80)}…"\nPost B opens with: "${lineB.slice(0, 80)}…"\n\nDifferent structures, but both match this creator's rhythm: ${voice.sentenceRhythm.split(",")[0].toLowerCase()}.\n\nThe shared DNA: both create immediate tension — then withhold the resolution to drive reading.`;
+  }
+
+  let insight = `Post A: "${lineA.slice(0, 80)}${lineA.length > 80 ? "…" : ""}"\nPost B: "${lineB.slice(0, 80)}${lineB.length > 80 ? "…" : ""}"\n\n`;
+  insight += similarities.join(".\n\n") + ".";
+  insight += `\n\nThe formula: ${voice.sentenceRhythm.split(",")[0].toLowerCase()} → immediate tension → withhold resolution.`;
+
+  return insight;
 }
 
 // ── Route handler ─────────────────────────────────────────────────────────────

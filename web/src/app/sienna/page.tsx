@@ -248,12 +248,11 @@ function HookCard({
       {/* Footer */}
       <div className="px-5 pb-4 flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          {/* Emotional trigger */}
           <span
             className="text-[11px] font-medium"
             style={{ color: "#6b7280" }}
           >
-            🎯 {hook.emotionalTrigger}
+            {hook.emotionalTrigger}
           </span>
         </div>
 
@@ -558,7 +557,7 @@ function SiennaPageInner() {
       (h, i) =>
         `== HOOK #${i + 1}: ${h.type} (Score: ${h.engagementScore}) ==\n` +
         `Derived from: ${h.derivedFrom || "pattern analysis"}\n\n` +
-        `${h.hook}\n\n📌 Trigger: ${h.emotionalTrigger}\n💡 Why it works: ${h.rationale}\n`,
+        `${h.hook}\n\nReason: ${h.emotionalTrigger}\nExplanation: ${h.rationale}\n`,
     );
     const content = [
       `SIENNA VIRAL HOOK REPORT`,
