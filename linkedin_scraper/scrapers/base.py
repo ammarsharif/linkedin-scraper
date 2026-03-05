@@ -153,14 +153,14 @@ class BaseScraper:
         except PlaywrightTimeoutError:
             logger.warning("Navigation did not complete within timeout")
     
-    async def navigate_and_wait(self, url: str, wait_until: str = 'domcontentloaded', timeout: int = 60000) -> None:
+    async def navigate_and_wait(self, url: str, wait_until: str = 'domcontentloaded', timeout: int = 120000) -> None:
         """
         Navigate to URL and wait for page load.
         
         Args:
             url: URL to navigate to
             wait_until: Wait condition (domcontentloaded, networkidle, load)
-            timeout: Timeout in milliseconds (default: 60000 = 60s)
+            timeout: Timeout in milliseconds (default: 120000 = 120s)
         """
         logger.info(f"Navigating to: {url}")
         # Use type: ignore to bypass strict typing

@@ -3,7 +3,7 @@ import { extractVanityName } from "@/lib/linkedin";
 import { spawn } from "child_process";
 import path from "path";
 
-export const maxDuration = 120; // 2 minutes — Playwright needs time
+export const maxDuration = 300; // 5 minutes — Playwright needs time
 
 // ── Python bridge caller ────────────────────────────────────────────────────
 
@@ -72,8 +72,8 @@ async function runPlaywrightBridge(
 
     const timer = setTimeout(() => {
       proc.kill("SIGTERM");
-      reject(new Error("Python bridge timed out after 100 seconds"));
-    }, 100_000);
+      reject(new Error("Python bridge timed out after 180 seconds"));
+    }, 180_000);
 
     proc.on("close", (code) => {
       clearTimeout(timer);

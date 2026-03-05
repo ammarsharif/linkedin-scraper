@@ -95,9 +95,14 @@ def extract_name_from_title(title: str) -> str:
 
 
 async def scrape(cookie_string: str, profile_url: str, limit: int) -> dict:
-    profile_url = profile_url.rstrip("/") + "/"
+    # Remove trailing slash cleanly, but don't append one if there's a query string
+    from urllib.parse import urlparse, urlunparse
+    parsed = urlparse(profile_url)
+    if not parsed.path.endswith('/'):
+        profile_url = urlunparse(parsed._replace(path=parsed.path + '/'))
+
     vanity = re.search(r'linkedin\.com/in/([^/?#]+)', profile_url)
-    vanity_name = vanity.group(1).rstrip("/") if vanity else ""
+    vanity_name = vanity.group(1).strip("/") if vanity else ""
 
     result = {
         "profile": {
