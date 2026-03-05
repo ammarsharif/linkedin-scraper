@@ -26,6 +26,7 @@ sys.path.insert(0, ROOT)
 
 from linkedin_scraper.core.browser import BrowserManager
 from linkedin_scraper.scrapers.person_posts import PersonPostsScraper
+from linkedin_scraper.scrapers.person import PersonScraper
 
 
 def _jitter(lo: float = 1.5, hi: float = 4.5) -> float:
@@ -121,58 +122,20 @@ async def scrape(cookie_string: str, profile_url: str, limit: int) -> dict:
         # Brief random idle before starting — avoids same-millisecond request patterns
         await _human_pause(1.0, 3.0)
 
-        # ── Step 1: Get the profile name ────────────────────────────────────
+        # ── Step 1: Get the profile ────────────────────────────────────
         try:
-            await browser.page.goto(profile_url, wait_until="domcontentloaded", timeout=30000)
-            # Randomised wait: 2.5 – 5 s (instead of fixed 2 s)
-            await _human_pause(2.5, 5.0)
-            await _move_mouse_randomly(browser.page)
-
-            # Try h1 selector first
-            name = ""
-            for sel in ["h1.text-heading-xlarge", "h1", '[data-anonymize="person-name"]']:
-                try:
-                    el = browser.page.locator(sel).first
-                    text = (await el.text_content(timeout=3000) or "").strip()
-                    if text and len(text) > 1 and text.lower() != "linkedin":
-                        name = text
-                        break
-                except Exception:
-                    continue
-
-            # Fallback: page title
-            if not name:
-                title = await browser.page.title()
-                name = extract_name_from_title(title)
-                print(f"[bridge] Using title-based name: {name!r}", file=sys.stderr)
-
-            # Fallback: og:title from meta tag
-            if not name:
-                og = await browser.page.evaluate(
-                    'document.querySelector(\'meta[property="og:title"]\')?.content ?? ""'
-                )
-                name = extract_name_from_title(og or "")
-
-            if name:
-                result["profile"]["name"] = name
-                print(f"[bridge] Profile name: {name!r}", file=sys.stderr)
-
-            # Also try to get location
-            for sel in [
-                ".text-body-small.inline.t-black--light.break-words",
-                '[data-anonymize="location"]',
-            ]:
-                try:
-                    loc_el = browser.page.locator(sel).first
-                    loc = (await loc_el.text_content(timeout=2000) or "").strip()
-                    if loc:
-                        result["profile"]["location"] = loc
-                        break
-                except Exception:
-                    continue
-
+            person_scraper = PersonScraper(browser.page)
+            person = await person_scraper.scrape(profile_url)
+            
+            result["profile"].update(person.model_dump())
+            result["profile"]["headline"] = person.job_title or ""
+            result["profile"]["name"] = person.name or vanity_name
+            result["profile"]["location"] = person.location or ""
+            print(f"[bridge] Profile scraped: {person.name!r}", file=sys.stderr)
         except Exception as e:
-            print(f"[bridge] Profile nav error: {e}", file=sys.stderr)
+            print(f"[bridge] Profile scrape error: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
 
         # ── Step 2: Scrape posts ─────────────────────────────────────────────
         try:

@@ -38,7 +38,7 @@ from linkedin_scraper.export import export_posts_to_csv, export_posts_to_json, e
 # ADD YOUR LINKEDIN PROFILE URLs HERE 👇
 # =============================================
 PROFILE_URLS = [
-    "https://www.linkedin.com/in/jasirullahkhan/",
+    "https://www.linkedin.com/in/imnaveedsarwar/?locale=en",
 ]
 
 # Maximum number of posts to scrape per profile

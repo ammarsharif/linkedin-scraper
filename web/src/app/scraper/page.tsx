@@ -32,8 +32,8 @@ interface ScrapeResultItem {
 export default function ScraperPage() {
   const router = useRouter();
   const [userName, setUserName] = useState("");
-  const [profileUrls, setProfileUrls] = useState("");
-  const [postsLimit, setPostsLimit] = useState(10);
+  const [profileUrls, setProfileUrls] = useState("https://www.linkedin.com/in/imnaveedsarwar/?locale=en");
+  const [postsLimit, setPostsLimit] = useState(2);
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(true);
   const [results, setResults] = useState<ScrapeResultItem[]>([]);
@@ -236,6 +236,7 @@ export default function ScraperPage() {
     localStorage.removeItem("scraper_state");
     localStorage.removeItem("sienna_state");
     localStorage.removeItem("sienna_payload");
+    localStorage.removeItem("ceevee_state");
     await fetch("/api/auth", { method: "DELETE" });
     router.push("/");
   }
@@ -298,6 +299,43 @@ export default function ScraperPage() {
                 Profile &amp; Posts Scraper
               </p>
             </div>
+
+            {/* Navigation */}
+            <div style={{ width: 1, height: 24, background: "rgba(255,255,255,0.08)", margin: "0 4px" }} />
+            <nav className="flex items-center gap-1">
+              <button
+                onClick={() => {
+                  if (results.length > 0) {
+                    localStorage.setItem("sienna_payload", JSON.stringify({
+                      profiles: results.map(r => r.profile),
+                      posts: results.flatMap(r => r.posts),
+                    }));
+                    localStorage.removeItem("ceevee_state");
+                  }
+                  router.push("/ceevee");
+                }}
+                className="group relative flex items-center gap-2 rounded-xl px-3.5 py-1.5 text-xs font-bold text-white transition-all duration-300 cursor-pointer hover:-translate-y-px overflow-hidden"
+                style={{
+                  background: "linear-gradient(135deg, #0ea5e9, #2563eb)",
+                  boxShadow: "0 0 14px rgba(14,165,233,0.35)",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.boxShadow = "0 0 22px rgba(14,165,233,0.55)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "0 0 14px rgba(14,165,233,0.35)"; }}
+              >
+                <div className="absolute inset-0 bg-white/10 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="relative z-10">
+                  <circle cx="11" cy="11" r="8" />
+                  <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                </svg>
+                <span className="relative z-10">Ceevee</span>
+                <span
+                  className="relative z-10 flex items-center justify-center rounded-md px-1.5 py-0.5 text-[9px] font-black tracking-wide"
+                  style={{ background: "rgba(255,255,255,0.22)", letterSpacing: "0.06em" }}
+                >
+                  NEW
+                </span>
+              </button>
+            </nav>
           </div>
 
           <div className="flex items-center gap-3">
@@ -418,7 +456,7 @@ export default function ScraperPage() {
                   value={postsLimit}
                   onChange={(e) =>
                     setPostsLimit(
-                      Math.min(50, Math.max(1, parseInt(e.target.value) || 10))
+                      Math.min(50, Math.max(1, parseInt(e.target.value) || 2))
                     )
                   }
                 />
@@ -594,6 +632,47 @@ export default function ScraperPage() {
                       <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
                     </svg>
                     <span className="z-10 relative">Generate Hooks with Sienna</span>
+                  </button>
+                </div>
+
+                {/* Ceevee CTA */}
+                <div className="ceevee-cta-card mt-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div style={{
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      width: 24, height: 24, borderRadius: 6,
+                      background: "linear-gradient(135deg, #0284c7, #00b4d8)",
+                    }}>
+                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+                        <circle cx="11" cy="11" r="8" />
+                        <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                      </svg>
+                    </div>
+                    <span className="text-sm font-bold" style={{ background: "linear-gradient(135deg, #0284c7, #00b4d8)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Next Step: Ceevee</span>
+                  </div>
+                  <p className="text-xs mb-3" style={{ color: "var(--text-muted)" }}>
+                    AI-powered prospect research dossier with personalized conversation starters.
+                  </p>
+                  <button
+                    onClick={() => {
+                      if (results.length > 0) {
+                        localStorage.setItem("sienna_payload", JSON.stringify({
+                          profiles: results.map(r => r.profile),
+                          posts: results.flatMap(r => r.posts),
+                        }));
+                        localStorage.removeItem("ceevee_state");
+                      }
+                      router.push("/ceevee");
+                    }}
+                    className="group relative flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3.5 text-sm font-bold text-white shadow-lg shadow-blue-500/20 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-blue-500/40 active:translate-y-0 cursor-pointer overflow-hidden"
+                    style={{ background: "linear-gradient(135deg, #0ea5e9, #2563eb)" }}
+                  >
+                    <div className="absolute inset-0 bg-white/20 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="z-10 relative">
+                      <circle cx="11" cy="11" r="8" />
+                      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                    </svg>
+                    <span className="z-10 relative">Research Lead with Ceevee</span>
                   </button>
                 </div>
               </div>
