@@ -237,6 +237,7 @@ export default function ScraperPage() {
     localStorage.removeItem("sienna_state");
     localStorage.removeItem("sienna_payload");
     localStorage.removeItem("ceevee_state");
+    localStorage.removeItem("inti_state");
     await fetch("/api/auth", { method: "DELETE" });
     router.push("/");
   }
@@ -252,6 +253,7 @@ export default function ScraperPage() {
     localStorage.removeItem("scraper_state");
     localStorage.removeItem("sienna_state");
     localStorage.removeItem("sienna_payload");
+    localStorage.removeItem("inti_state");
     setResults([]);
     setProfileUrls("");
     setPostsLimit(10);
@@ -675,6 +677,7 @@ export default function ScraperPage() {
                     <span className="z-10 relative">Research Lead with Ceevee</span>
                   </button>
                 </div>
+
               </div>
             )}
           </div>

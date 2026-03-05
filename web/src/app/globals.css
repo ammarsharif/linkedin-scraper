@@ -1016,3 +1016,67 @@ body {
   border-radius: 16px;
   padding: 20px;
 }
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   INTI — Pitching ICP Bot Design System
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+:root {
+  --inti: #6366f1;
+  --inti-2: #818cf8;
+  --inti-3: #4f46e5;
+  --inti-gradient: linear-gradient(135deg, #4f46e5, #6366f1, #818cf8);
+  --inti-glow: rgba(99, 102, 241, 0.35);
+  --inti-soft: rgba(99, 102, 241, 0.1);
+}
+
+@keyframes inti-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.3);
+    opacity: 1;
+  }
+  50% {
+    box-shadow: 0 0 28px 8px rgba(99, 102, 241, 0.2);
+    opacity: 0.88;
+  }
+}
+
+/* Inti CTA card in Ceevee / scraper pages */
+.inti-cta-card {
+  background: linear-gradient(
+    135deg,
+    rgba(99, 102, 241, 0.08),
+    rgba(79, 70, 229, 0.04)
+  );
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  border-radius: 16px;
+  padding: 20px;
+}
+
+/* Inti nav button (used in Ceevee header) */
+.btn-inti-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: white;
+  background: var(--inti-gradient);
+  box-shadow: 0 0 14px rgba(99, 102, 241, 0.35);
+  cursor: pointer;
+  border: none;
+  transition: all 0.25s ease;
+  position: relative;
+  overflow: hidden;
+}
+.btn-inti-nav:hover {
+  box-shadow: 0 0 22px rgba(99, 102, 241, 0.55);
+  transform: translateY(-1px);
+}
+.btn-inti-nav:active {
+  transform: translateY(0);
+}
+

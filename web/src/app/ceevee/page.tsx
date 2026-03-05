@@ -484,14 +484,40 @@ export default function CeeveePage() {
             </div>
           </div>
 
-          {data && (
-            <button
-              onClick={handleReset}
-              className="text-sm px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 font-medium transition-all border border-white/10 cursor-pointer"
-            >
-              New Research
-            </button>
-          )}
+          <div className="flex items-center gap-3">
+            {data && (
+              <button
+                onClick={() => router.push("/inti")}
+                className="group relative flex items-center gap-2 rounded-xl px-3.5 py-1.5 text-xs font-bold text-white transition-all duration-300 cursor-pointer hover:-translate-y-px overflow-hidden"
+                style={{
+                  background: "linear-gradient(135deg, #4f46e5, #6366f1, #818cf8)",
+                  boxShadow: "0 0 14px rgba(99,102,241,0.35)",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.boxShadow = "0 0 22px rgba(99,102,241,0.55)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "0 0 14px rgba(99,102,241,0.35)"; }}
+              >
+                <div className="absolute inset-0 bg-white/10 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="relative z-10">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                </svg>
+                <span className="relative z-10">Pitch with Inti</span>
+                <span
+                  className="relative z-10 flex items-center justify-center rounded-md px-1.5 py-0.5 text-[9px] font-black tracking-wide"
+                  style={{ background: "rgba(255,255,255,0.22)", letterSpacing: "0.06em" }}
+                >
+                  NEW
+                </span>
+              </button>
+            )}
+            {data && (
+              <button
+                onClick={handleReset}
+                className="text-sm px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 font-medium transition-all border border-white/10 cursor-pointer"
+              >
+                New Research
+              </button>
+            )}
+          </div>
         </div>
       </header>
 
@@ -1116,10 +1142,41 @@ export default function CeeveePage() {
                     </div>
                   </div>
                 ))}
+
+                {/* ── Inti CTA ── */}
+                <div className="inti-cta-card">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div style={{
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      width: 24, height: 24, borderRadius: 6,
+                      background: "linear-gradient(135deg, #4f46e5, #6366f1, #818cf8)",
+                    }}>
+                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                      </svg>
+                    </div>
+                    <span className="text-sm font-bold" style={{ background: "linear-gradient(135deg, #4f46e5, #6366f1, #818cf8)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Next Step: Inti Pitching Bot</span>
+                  </div>
+                  <p className="text-xs mb-3" style={{ color: "var(--text-muted)" }}>
+                    Ready to hunt this client? Inti uses this research dossier to craft a tailored sales pitch with your chosen tone.
+                  </p>
+                  <button
+                    onClick={() => router.push("/inti")}
+                    className="group relative flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3.5 text-sm font-bold text-white shadow-lg transition-all duration-300 hover:-translate-y-0.5 active:translate-y-0 cursor-pointer overflow-hidden"
+                    style={{ background: "linear-gradient(135deg, #4f46e5, #6366f1, #818cf8)", boxShadow: "0 4px 20px rgba(99,102,241,0.3)" }}
+                  >
+                    <div className="absolute inset-0 bg-white/20 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="z-10 relative">
+                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                    </svg>
+                    <span className="z-10 relative">Generate Tailored Pitch with Inti</span>
+                  </button>
+                </div>
               </div>
             )}
 
             {/* ── Section: Key References ── */}
+
             {activeSection === 6 && report && (
               <div className="space-y-6 animate-fade-in">
                 <SectionHeader

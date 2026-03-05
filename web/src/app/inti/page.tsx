@@ -1,0 +1,930 @@
+"use client";
+
+import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
+
+// ── Types ──────────────────────────────────────────────────────────────────────
+
+type PitchTone =
+  | "professional"
+  | "friendly"
+  | "bold"
+  | "consultative"
+  | "storytelling"
+  | "direct";
+
+interface ProspectData {
+  name: string;
+  headline: string;
+  location?: string;
+  executiveSummary?: string;
+  areasOfExpertise?: string[];
+  challengesMentioned?: string[];
+  achievementsMentioned?: string[];
+  toolsAndTechnologies?: string[];
+  primaryTopics?: string[];
+  values?: string[];
+  communicationStyle?: string;
+  currentFocus?: string;
+  companyStage?: string;
+  roleLevel?: string;
+  quotableLines?: string[];
+  commonGround?: string[];
+  petPeeves?: string[];
+  motivations?: string[];
+  careerSummary?: string;
+}
+
+interface PitchResult {
+  subject: string;
+  pitchMessage: string;
+  openingHook: string;
+  whyItWorks: string;
+  keyPersonalizationPoints: string[];
+  alternateClosings: string[];
+  redFlags: string[];
+  followUpAngle: string;
+}
+
+interface IntiResponse {
+  success: boolean;
+  tone: PitchTone;
+  toneName: string;
+  pitch: PitchResult;
+  meta: {
+    prospectName: string;
+    generatedAt: string;
+    poweredBy: string;
+  };
+}
+
+// ── Brand color (single source of truth) ─────────────────────────────────────
+const INTI_COLOR = "#6366f1";
+const INTI_GRADIENT = "linear-gradient(135deg, #4f46e5, #6366f1, #818cf8)";
+const INTI_GLOW = "rgba(99, 102, 241, 0.35)";
+const INTI_SOFT = "rgba(99, 102, 241, 0.1)";
+
+// ── Tone Config ────────────────────────────────────────────────────────────────
+
+const TONES: {
+  id: PitchTone;
+  label: string;
+  tagline: string;
+  color: string;
+  icon: React.ReactNode;
+}[] = [
+  {
+    id: "professional",
+    label: "Professional",
+    tagline: "Credible & polished",
+    color: "#0ea5e9",
+    icon: (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <rect x="2" y="7" width="20" height="14" rx="2" />
+        <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
+      </svg>
+    ),
+  },
+  {
+    id: "friendly",
+    label: "Friendly",
+    tagline: "Warm & human",
+    color: "#10b981",
+    icon: (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+        <circle cx="9" cy="7" r="4" />
+        <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+      </svg>
+    ),
+  },
+  {
+    id: "bold",
+    label: "Bold",
+    tagline: "High-impact & fearless",
+    color: "#f59e0b",
+    icon: (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+      </svg>
+    ),
+  },
+  {
+    id: "consultative",
+    label: "Consultative",
+    tagline: "Problem-solver focused",
+    color: "#a78bfa",
+    icon: (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <circle cx="12" cy="12" r="10" />
+        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+        <line x1="12" y1="17" x2="12.01" y2="17" />
+      </svg>
+    ),
+  },
+  {
+    id: "storytelling",
+    label: "Storytelling",
+    tagline: "Narrative-driven hook",
+    color: "#ec4899",
+    icon: (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+        <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
+      </svg>
+    ),
+  },
+  {
+    id: "direct",
+    label: "Direct",
+    tagline: "No fluff, fast close",
+    color: "#fb923c",
+    icon: (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <line x1="5" y1="12" x2="19" y2="12" />
+        <polyline points="12 5 19 12 12 19" />
+      </svg>
+    ),
+  },
+];
+
+// ── Copy Button ────────────────────────────────────────────────────────────────
+
+function CopyButton({ text, label }: { text: string; label?: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={async () => {
+        await navigator.clipboard.writeText(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        padding: "5px 12px",
+        borderRadius: 8,
+        fontSize: 11,
+        fontWeight: 600,
+        border: `1px solid ${copied ? "rgba(0,230,118,0.25)" : "rgba(255,255,255,0.08)"}`,
+        background: copied ? "rgba(0,230,118,0.08)" : "rgba(255,255,255,0.04)",
+        color: copied ? "#00e676" : "#8b8fa3",
+        cursor: "pointer",
+        transition: "all 0.2s",
+        whiteSpace: "nowrap",
+        flexShrink: 0,
+      }}
+    >
+      {copied ? (
+        <>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+          Copied
+        </>
+      ) : (
+        <>
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+          </svg>
+          {label || "Copy"}
+        </>
+      )}
+    </button>
+  );
+}
+
+// ── Loading Overlay ────────────────────────────────────────────────────────────
+
+const LOADING_STEPS = [
+  "Reading prospect intelligence...",
+  "Analyzing personalization signals...",
+  "Crafting your pitch angle...",
+  "Writing tailored message...",
+  "Polishing and refining...",
+];
+
+function LoadingOverlay({ step, toneName }: { step: number; toneName: string }) {
+  return (
+    <div className="max-w-md mx-auto mt-10 animate-fade-in">
+      <div
+        className="p-8 rounded-2xl text-center"
+        style={{
+          background: "rgba(0,0,0,0.4)",
+          border: "1px solid rgba(255,255,255,0.08)",
+          backdropFilter: "blur(20px)",
+        }}
+      >
+        <div
+          className="mx-auto mb-6 flex items-center justify-center rounded-2xl"
+          style={{
+            width: 64,
+            height: 64,
+            background: INTI_GRADIENT,
+            boxShadow: `0 0 40px ${INTI_GLOW}`,
+            animation: "inti-pulse 2s ease-in-out infinite",
+          }}
+        >
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          </svg>
+        </div>
+        <h3 className="text-lg font-bold text-white mb-1">Crafting Your {toneName} Pitch</h3>
+        <p className="text-sm text-gray-400 mb-6">Personalizing for maximum impact...</p>
+        <div className="space-y-2">
+          {LOADING_STEPS.map((label, i) => (
+            <div
+              key={i}
+              className="flex items-center gap-3 px-4 py-2 rounded-lg transition-all duration-500"
+              style={{
+                background: i === step ? `${INTI_SOFT}` : "transparent",
+                opacity: i <= step ? 1 : 0.3,
+              }}
+            >
+              <div className="w-5 h-5 flex items-center justify-center shrink-0">
+                {i < step ? (
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#00e676" strokeWidth="2.5">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                ) : i === step ? (
+                  <div
+                    style={{
+                      width: 13,
+                      height: 13,
+                      border: `2px solid rgba(99,102,241,0.3)`,
+                      borderTopColor: INTI_COLOR,
+                      borderRadius: "50%",
+                      animation: "spin 0.7s linear infinite",
+                    }}
+                  />
+                ) : (
+                  <div className="w-1.5 h-1.5 rounded-full bg-gray-600" />
+                )}
+              </div>
+              <span className="text-sm" style={{ color: i <= step ? "#e5e7eb" : "#5a5e72" }}>
+                {label}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main Page ──────────────────────────────────────────────────────────────────
+
+export default function IntiPage() {
+  const router = useRouter();
+
+  const [checking, setChecking] = useState(true);
+  const [prospect, setProspect] = useState<ProspectData | null>(null);
+  const [selectedTone, setSelectedTone] = useState<PitchTone>("professional");
+  const [extraContext, setExtraContext] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [loadingStep, setLoadingStep] = useState(0);
+  const [result, setResult] = useState<IntiResponse | null>(null);
+  const [error, setError] = useState("");
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const [generatedTones, setGeneratedTones] = useState<Record<string, IntiResponse>>({});
+
+  const showToast = useCallback((message: string, type: "success" | "error") => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 4000);
+  }, []);
+
+  // Auth check
+  useEffect(() => {
+    fetch("/api/auth")
+      .then((r) => r.json())
+      .then((d) => {
+        if (!d.authenticated) router.push("/");
+      })
+      .catch(() => router.push("/"))
+      .finally(() => setChecking(false));
+  }, [router]);
+
+  // Load Ceevee data from localStorage
+  useEffect(() => {
+    try {
+      const stateStr = localStorage.getItem("ceevee_state");
+      if (stateStr) {
+        const s = JSON.parse(stateStr);
+        if (s.data?.profile && s.data?.report) {
+          const report = s.data.report;
+          const profile = s.data.profile;
+          const extracted: ProspectData = {
+            name: profile.name,
+            headline: profile.headline,
+            location: profile.location,
+            executiveSummary: report.executiveSummary,
+            areasOfExpertise: report.profileAnalysis?.areasOfExpertise,
+            challengesMentioned: report.professionalInsights?.challengesMentioned,
+            achievementsMentioned: report.professionalInsights?.achievementsMentioned,
+            toolsAndTechnologies: report.professionalInsights?.toolsAndTechnologies,
+            primaryTopics: report.contentAnalysis?.primaryTopics?.map(
+              (t: { topic: string }) => t.topic
+            ),
+            values: report.personalityProfile?.values,
+            communicationStyle: report.personalityProfile?.communicationStyle,
+            currentFocus: report.professionalInsights?.currentFocus,
+            companyStage: report.profileAnalysis?.estimatedCompanyStage,
+            roleLevel: report.profileAnalysis?.roleLevel,
+            quotableLines: report.keyReferences?.quotableLines,
+            commonGround: report.keyReferences?.commonGround,
+            petPeeves: report.personalityProfile?.petPeeves,
+            motivations: report.personalityProfile?.motivations,
+            careerSummary: report.careerTrajectory?.currentFocus,
+          };
+          setProspect(extracted);
+        }
+      }
+
+      // Load saved inti state
+      const intiStr = localStorage.getItem("inti_state");
+      if (intiStr) {
+        const s = JSON.parse(intiStr);
+        if (s.result) setResult(s.result);
+        if (s.generatedTones) setGeneratedTones(s.generatedTones);
+        if (s.extraContext) setExtraContext(s.extraContext);
+        if (s.selectedTone) setSelectedTone(s.selectedTone);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Loading step animation
+  useEffect(() => {
+    if (!loading) return;
+    const interval = setInterval(() => {
+      setLoadingStep((prev) => (prev < LOADING_STEPS.length - 1 ? prev + 1 : prev));
+    }, 2500);
+    return () => clearInterval(interval);
+  }, [loading]);
+
+  async function handleGenerate() {
+    if (!prospect) return;
+    setError("");
+    setLoadingStep(0);
+    setLoading(true);
+
+    try {
+      const res = await fetch("/api/inti", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prospect, tone: selectedTone, extraContext }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        if (res.status === 401) { router.push("/"); return; }
+        setError(data.error || "Failed to generate pitch");
+        return;
+      }
+
+      const newResult = data as IntiResponse;
+      setResult(newResult);
+      const newGeneratedTones = { ...generatedTones, [selectedTone]: newResult };
+      setGeneratedTones(newGeneratedTones);
+
+      localStorage.setItem(
+        "inti_state",
+        JSON.stringify({ result: newResult, generatedTones: newGeneratedTones, extraContext, selectedTone })
+      );
+
+      showToast(`${newResult.toneName} pitch generated`, "success");
+    } catch {
+      setError("Network error. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleToneSwitch(tone: PitchTone) {
+    setSelectedTone(tone);
+    if (generatedTones[tone]) {
+      setResult(generatedTones[tone]);
+    }
+  }
+
+  function handleReset() {
+    setResult(null);
+    setGeneratedTones({});
+    setExtraContext("");
+    setError("");
+    localStorage.removeItem("inti_state");
+  }
+
+  const currentToneConfig = TONES.find((t) => t.id === selectedTone)!;
+
+  if (checking) {
+    return (
+      <div style={{ display: "flex", minHeight: "100vh", alignItems: "center", justifyContent: "center" }}>
+        <div className="bg-mesh" />
+        <div className="spinner-lg spinner" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative min-h-screen" style={{ background: "#080910" }}>
+      <div className="bg-mesh" />
+
+      {/* ── Toast ── */}
+      {toast && (
+        <div
+          className="fixed bottom-6 right-6 z-50 animate-fade-in flex items-center gap-3 px-5 py-3 rounded-xl border text-sm font-semibold shadow-2xl"
+          style={{
+            background: toast.type === "success" ? "rgba(0,230,118,0.1)" : "rgba(239,68,68,0.1)",
+            color: toast.type === "success" ? "#00e676" : "#ef4444",
+            borderColor: toast.type === "success" ? "rgba(0,230,118,0.2)" : "rgba(239,68,68,0.2)",
+            backdropFilter: "blur(12px)",
+          }}
+        >
+          {toast.message}
+        </div>
+      )}
+
+      {/* ── Header ── */}
+      <header
+        className="sticky top-0 z-50 border-b"
+        style={{
+          background: "rgba(8,9,16,0.85)",
+          backdropFilter: "blur(16px)",
+          borderColor: "rgba(255,255,255,0.06)",
+        }}
+      >
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-3.5">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => router.push("/ceevee")}
+              className="flex items-center gap-2 text-sm font-medium transition-colors cursor-pointer"
+              style={{ color: "#6b7280" }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = "#818cf8")}
+              onMouseLeave={(e) => (e.currentTarget.style.color = "#6b7280")}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <line x1="19" y1="12" x2="5" y2="12" />
+                <polyline points="12 19 5 12 12 5" />
+              </svg>
+              Back to Ceevee
+            </button>
+            <div style={{ width: 1, height: 20, background: "rgba(255,255,255,0.08)" }} />
+            {/* Brand */}
+            <div className="flex items-center gap-2.5">
+              <div
+                className="flex items-center justify-center rounded-lg"
+                style={{
+                  width: 32,
+                  height: 32,
+                  background: INTI_GRADIENT,
+                  boxShadow: `0 0 12px ${INTI_GLOW}`,
+                }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                </svg>
+              </div>
+              <div>
+                <p className="text-sm font-bold" style={{ color: "#e5e7eb", lineHeight: 1.2 }}>Inti</p>
+                <p className="text-[11px]" style={{ color: "#4b5268" }}>Pitching ICP Bot</p>
+              </div>
+            </div>
+          </div>
+
+          {result && (
+            <button
+              onClick={handleReset}
+              className="text-sm px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 font-medium transition-all border border-white/10 cursor-pointer"
+            >
+              Clear Pitches
+            </button>
+          )}
+        </div>
+      </header>
+
+      {/* ── Main ── */}
+      <main className="relative z-10 mx-auto max-w-6xl px-6 py-10">
+        {!prospect ? (
+          /* ── No Data State ── */
+          <div className="max-w-lg mx-auto mt-16 text-center animate-fade-in">
+            <div
+              className="mx-auto mb-6 flex items-center justify-center rounded-2xl"
+              style={{
+                width: 72,
+                height: 72,
+                background: INTI_SOFT,
+                border: `1px solid rgba(99,102,241,0.2)`,
+              }}
+            >
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke={INTI_COLOR} strokeWidth="1.5">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+              </svg>
+            </div>
+            <h2 className="text-2xl font-bold text-white mb-3">No Prospect Data Found</h2>
+            <p className="text-gray-400 text-sm mb-8 leading-relaxed">
+              Inti needs a Ceevee research report to craft a personalized pitch. First, research your
+              prospect using Ceevee, then come back here.
+            </p>
+            <button
+              onClick={() => router.push("/ceevee")}
+              className="inline-flex items-center gap-2 px-6 py-3 rounded-xl font-bold text-white cursor-pointer"
+              style={{ background: "linear-gradient(135deg, #0ea5e9, #2563eb)" }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              Go to Ceevee
+            </button>
+          </div>
+        ) : loading ? (
+          <LoadingOverlay step={loadingStep} toneName={currentToneConfig.label} />
+        ) : (
+          <div className="animate-fade-in">
+            {/* ── Prospect Banner ── */}
+            <div
+              className="mb-6 p-5 rounded-2xl border flex items-center gap-4"
+              style={{ background: "rgba(0,0,0,0.3)", borderColor: "rgba(255,255,255,0.07)" }}
+            >
+              <div
+                className="flex items-center justify-center rounded-xl text-sm font-bold text-white shrink-0"
+                style={{
+                  width: 44,
+                  height: 44,
+                  background: INTI_GRADIENT,
+                  boxShadow: `0 4px 14px ${INTI_GLOW}`,
+                }}
+              >
+                {prospect.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2.5 mb-0.5">
+                  <h2 className="text-sm font-bold text-white truncate">{prospect.name}</h2>
+                  <span
+                    className="text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0"
+                    style={{
+                      background: INTI_SOFT,
+                      color: INTI_COLOR,
+                      border: `1px solid rgba(99,102,241,0.25)`,
+                    }}
+                  >
+                    ICP Loaded
+                  </span>
+                </div>
+                <p className="text-xs text-gray-500 truncate">{prospect.headline}</p>
+              </div>
+              <button
+                onClick={() => router.push("/ceevee")}
+                className="text-xs text-gray-600 hover:text-gray-300 transition-colors cursor-pointer shrink-0"
+              >
+                Change
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-6">
+              {/* ── Left: Controls ── */}
+              <div className="space-y-4">
+
+                {/* Tone Selector */}
+                <div
+                  className="p-5 rounded-2xl border"
+                  style={{ background: "rgba(0,0,0,0.28)", borderColor: "rgba(255,255,255,0.07)" }}
+                >
+                  <p className="text-[10px] font-bold uppercase tracking-wider mb-3" style={{ color: "#5a5e72" }}>
+                    Pitch Tone
+                  </p>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {TONES.map((tone) => {
+                      const isActive = selectedTone === tone.id;
+                      const hasGenerated = !!generatedTones[tone.id];
+                      return (
+                        <button
+                          key={tone.id}
+                          onClick={() => handleToneSwitch(tone.id)}
+                          className="relative flex items-center gap-2.5 p-3 rounded-xl border transition-all duration-150 cursor-pointer text-left"
+                          style={{
+                            background: isActive ? `${tone.color}10` : "rgba(255,255,255,0.02)",
+                            borderColor: isActive ? `${tone.color}35` : "rgba(255,255,255,0.05)",
+                          }}
+                        >
+                          {/* Generated dot */}
+                          {hasGenerated && (
+                            <div
+                              className="absolute top-2 right-2 w-1.5 h-1.5 rounded-full"
+                              style={{ background: tone.color }}
+                            />
+                          )}
+                          <div style={{ color: isActive ? tone.color : "#4b5268", flexShrink: 0 }}>
+                            {tone.icon}
+                          </div>
+                          <div className="min-w-0">
+                            <p
+                              className="text-xs font-semibold leading-tight"
+                              style={{ color: isActive ? tone.color : "#c9ccd6" }}
+                            >
+                              {tone.label}
+                            </p>
+                            <p className="text-[9px] leading-tight mt-0.5" style={{ color: "#4b5268" }}>
+                              {tone.tagline}
+                            </p>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Extra Context */}
+                <div
+                  className="p-5 rounded-2xl border"
+                  style={{ background: "rgba(0,0,0,0.28)", borderColor: "rgba(255,255,255,0.07)" }}
+                >
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "#5a5e72" }}>
+                      Extra Context
+                    </p>
+                    <span
+                      className="text-[9px] font-bold px-1.5 py-0.5 rounded"
+                      style={{
+                        background: "rgba(255,255,255,0.05)",
+                        color: "#5a5e72",
+                        border: "1px solid rgba(255,255,255,0.08)",
+                      }}
+                    >
+                      OPTIONAL
+                    </span>
+                  </div>
+                  <textarea
+                    value={extraContext}
+                    onChange={(e) => setExtraContext(e.target.value)}
+                    placeholder={`Add context to guide the pitch angle...\n\nExamples:\n- We offer AI automation for customer support\n- Focus on their scaling challenge\n- We helped similar companies cut costs 40%`}
+                    rows={6}
+                    className="w-full rounded-xl resize-none outline-none text-xs leading-relaxed"
+                    style={{
+                      background: "rgba(255,255,255,0.03)",
+                      border: "1px solid rgba(255,255,255,0.06)",
+                      color: "#d1d5db",
+                      padding: "10px 12px",
+                      fontFamily: "inherit",
+                      transition: "border-color 0.2s, box-shadow 0.2s",
+                    }}
+                    onFocus={(e) => {
+                      e.currentTarget.style.borderColor = `rgba(99,102,241,0.4)`;
+                      e.currentTarget.style.boxShadow = `0 0 0 3px rgba(99,102,241,0.08)`;
+                    }}
+                    onBlur={(e) => {
+                      e.currentTarget.style.borderColor = "rgba(255,255,255,0.06)";
+                      e.currentTarget.style.boxShadow = "none";
+                    }}
+                  />
+                  <p className="mt-2 text-[10px] leading-relaxed" style={{ color: "#3d4155" }}>
+                    Tell Inti what you offer or what angle to take. This heavily shapes the pitch.
+                  </p>
+                </div>
+
+                {/* Generate Button */}
+                <button
+                  onClick={handleGenerate}
+                  disabled={loading}
+                  className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl font-bold text-[14px] transition-all cursor-pointer disabled:opacity-50"
+                  style={{
+                    background: INTI_GRADIENT,
+                    color: "white",
+                    boxShadow: `0 4px 18px ${INTI_GLOW}`,
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!loading) e.currentTarget.style.boxShadow = `0 6px 26px rgba(99,102,241,0.55)`;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.boxShadow = `0 4px 18px ${INTI_GLOW}`;
+                  }}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                  </svg>
+                  {generatedTones[selectedTone]
+                    ? `Regenerate ${currentToneConfig.label} Pitch`
+                    : `Generate ${currentToneConfig.label} Pitch`}
+                </button>
+
+                {error && (
+                  <p className="text-red-400 text-sm text-center">{error}</p>
+                )}
+              </div>
+
+              {/* ── Right: Pitch Result ── */}
+              {result ? (
+                <div className="space-y-4 animate-fade-in">
+                  {/* Main Pitch Card */}
+                  <div
+                    className="p-6 rounded-2xl border"
+                    style={{
+                      background: "rgba(8,9,16,0.6)",
+                      borderColor: `${currentToneConfig.color}22`,
+                      boxShadow: `0 0 40px ${currentToneConfig.color}07`,
+                    }}
+                  >
+                    {/* Card header */}
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2.5">
+                        <div
+                          className="flex items-center justify-center rounded-lg"
+                          style={{
+                            width: 30,
+                            height: 30,
+                            background: `${currentToneConfig.color}12`,
+                            border: `1px solid ${currentToneConfig.color}25`,
+                            color: currentToneConfig.color,
+                          }}
+                        >
+                          {currentToneConfig.icon}
+                        </div>
+                        <div>
+                          <p className="text-[13px] font-bold text-white">{result.toneName} Pitch</p>
+                          <p className="text-[10px]" style={{ color: "#3d4155" }}>Ready to send</p>
+                        </div>
+                      </div>
+                      <CopyButton text={result.pitch.pitchMessage} label="Copy Pitch" />
+                    </div>
+
+                    {/* Subject Line */}
+                    {result.pitch.subject && (
+                      <div
+                        className="mb-4 p-3 rounded-xl"
+                        style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.05)" }}
+                      >
+                        <p className="text-[10px] font-bold uppercase tracking-wider mb-1" style={{ color: "#4b5268" }}>
+                          Subject Line
+                        </p>
+                        <p className="text-sm font-semibold text-gray-200">{result.pitch.subject}</p>
+                      </div>
+                    )}
+
+                    {/* Pitch Body */}
+                    <div
+                      className="p-5 rounded-xl"
+                      style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.04)" }}
+                    >
+                      <p className="text-[14px] leading-[1.75] text-gray-200 whitespace-pre-wrap">
+                        {result.pitch.pitchMessage}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Why It Works */}
+                  <div
+                    className="p-5 rounded-2xl border"
+                    style={{ background: "rgba(0,0,0,0.22)", borderColor: "rgba(255,255,255,0.06)" }}
+                  >
+                    <div className="flex items-center gap-2 mb-2.5">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={INTI_COLOR} strokeWidth="2">
+                        <circle cx="12" cy="12" r="10" />
+                        <line x1="12" y1="8" x2="12" y2="12" />
+                        <line x1="12" y1="16" x2="12.01" y2="16" />
+                      </svg>
+                      <p className="text-[10px] font-bold uppercase tracking-wider" style={{ color: INTI_COLOR }}>
+                        Why This Works
+                      </p>
+                    </div>
+                    <p className="text-sm text-gray-300 leading-relaxed">{result.pitch.whyItWorks}</p>
+                  </div>
+
+                  {/* Personalization Points */}
+                  <div
+                    className="p-5 rounded-2xl border"
+                    style={{ background: "rgba(0,0,0,0.22)", borderColor: "rgba(255,255,255,0.06)" }}
+                  >
+                    <p className="text-[10px] font-bold uppercase tracking-wider mb-3" style={{ color: "#5a5e72" }}>
+                      Personalization Signals Used
+                    </p>
+                    <ul className="space-y-2">
+                      {result.pitch.keyPersonalizationPoints?.map((point, i) => (
+                        <li key={i} className="flex items-start gap-2.5 text-sm text-gray-300">
+                          <span
+                            className="shrink-0 mt-0.5 flex items-center justify-center rounded-full text-[9px] font-bold"
+                            style={{
+                              width: 17,
+                              height: 17,
+                              background: `${INTI_SOFT}`,
+                              color: INTI_COLOR,
+                              border: `1px solid rgba(99,102,241,0.25)`,
+                            }}
+                          >
+                            {i + 1}
+                          </span>
+                          {point}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  {/* Alternate Closings + Follow Up in 2-col */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Alternate Closings */}
+                    <div
+                      className="p-5 rounded-2xl border"
+                      style={{ background: "rgba(0,0,0,0.22)", borderColor: "rgba(255,255,255,0.06)" }}
+                    >
+                      <p className="text-[10px] font-bold uppercase tracking-wider mb-3" style={{ color: "#5a5e72" }}>
+                        Alternate Closings
+                      </p>
+                      <div className="space-y-2">
+                        {result.pitch.alternateClosings?.map((c, i) => (
+                          <div
+                            key={i}
+                            className="flex items-start justify-between gap-2 p-3 rounded-lg"
+                            style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.04)" }}
+                          >
+                            <p className="text-xs text-gray-300 leading-relaxed">{c}</p>
+                            <CopyButton text={c} />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Follow Up + Red Flags */}
+                    <div className="space-y-3">
+                      <div
+                        className="p-5 rounded-2xl border"
+                        style={{ background: "rgba(0,0,0,0.22)", borderColor: "rgba(255,255,255,0.06)" }}
+                      >
+                        <p className="text-[10px] font-bold uppercase tracking-wider mb-2" style={{ color: "#5a5e72" }}>
+                          Follow-Up Angle
+                        </p>
+                        <p className="text-xs text-gray-300 leading-relaxed mb-2">{result.pitch.followUpAngle}</p>
+                        <CopyButton text={result.pitch.followUpAngle} label="Copy" />
+                      </div>
+
+                      {result.pitch.redFlags?.length > 0 && (
+                        <div
+                          className="p-4 rounded-2xl border"
+                          style={{
+                            background: "rgba(251,191,36,0.04)",
+                            borderColor: "rgba(251,191,36,0.12)",
+                          }}
+                        >
+                          <p className="text-[10px] font-bold uppercase tracking-wider mb-2" style={{ color: "rgba(251,191,36,0.6)" }}>
+                            Proceed Carefully
+                          </p>
+                          <ul className="space-y-1">
+                            {result.pitch.redFlags.map((flag, i) => (
+                              <li key={i} className="flex items-start gap-2 text-xs text-gray-400">
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth="2.5" className="shrink-0 mt-0.5">
+                                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                                  <line x1="12" y1="9" x2="12" y2="13" />
+                                  <line x1="12" y1="17" x2="12.01" y2="17" />
+                                </svg>
+                                {flag}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                /* ── Empty Right Panel — clean, no duplicate buttons ── */
+                <div
+                  className="flex flex-col items-center justify-center rounded-2xl border"
+                  style={{
+                    minHeight: 480,
+                    background: "rgba(0,0,0,0.15)",
+                    borderColor: "rgba(255,255,255,0.05)",
+                    borderStyle: "dashed",
+                  }}
+                >
+                  <div
+                    className="flex items-center justify-center rounded-2xl mb-5"
+                    style={{
+                      width: 64,
+                      height: 64,
+                      background: INTI_SOFT,
+                      border: `1px solid rgba(99,102,241,0.18)`,
+                    }}
+                  >
+                    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke={INTI_COLOR} strokeWidth="1.5">
+                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                    </svg>
+                  </div>
+                  <h3 className="text-base font-bold text-white mb-2">Ready to Generate</h3>
+                  <p className="text-sm text-center leading-relaxed max-w-[280px]" style={{ color: "#5a5e72" }}>
+                    Select a tone on the left, optionally add context about your offer, then click{" "}
+                    <span style={{ color: "#818cf8" }}>Generate</span> to craft a personalized pitch for{" "}
+                    <span className="text-gray-300 font-medium">{prospect.name}</span>.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}
