@@ -27,6 +27,16 @@ interface Post {
   articleUrl: string | null;
 }
 
+interface VoiceData {
+  sentenceRhythm: string;
+  usesIStatements: boolean;
+  usesQuestions: boolean;
+  usesEmDashes: boolean;
+  usesLists: boolean;
+  repeatedPhrases: string[];
+  repeatedVocabulary: string[];
+}
+
 interface HookVariant {
   type: string;
   hook: string;
@@ -35,8 +45,7 @@ interface HookVariant {
   engagementScore: number;
   sourcePostUrl?: string;
   derivedFrom?: string;
-  dinaCaptionPrompt?: string;
-  dinaImagePrompt?: string;
+  sourcePostIndex?: number | null;
 }
 
 interface TopPost {
@@ -67,6 +76,7 @@ interface SiennaResult {
   patterns: CreatorPattern;
   hooks: HookVariant[];
   topPosts: TopPost[];
+  voice: VoiceData;
   meta: {
     postsAnalyzed: number;
     topPostsUsed: number;
@@ -138,36 +148,6 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-function DinaPromptButton({ onClick }: { onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer hover:scale-105"
-      style={{
-        background:
-          "linear-gradient(135deg, rgba(168,85,247,0.1), rgba(236,72,153,0.1))",
-        borderColor: "rgba(236,72,153,0.2)",
-        color: "#fbcfe8",
-        borderWidth: 1,
-      }}
-    >
-      <svg
-        width="13"
-        height="13"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <path d="m12 3-1.9 5.8a2 2 0 0 1-1.287 1.288L3 12l5.8 1.9a2 2 0 0 1 1.288 1.287L12 21l1.9-5.8a2 2 0 0 1 1.287-1.288L21 12l-5.8-1.9a2 2 0 0 1-1.288-1.287Z" />
-      </svg>
-      Prompt Dina
-    </button>
-  );
-}
-
 // ── Hook Card ──────────────────────────────────────────────────────────────────
 
 function HookCard({
@@ -216,15 +196,27 @@ function HookCard({
           </span>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {(hook.dinaCaptionPrompt || hook.dinaImagePrompt) && (
-            <DinaPromptButton onClick={() => onPromptClick(hook)} />
-          )}
+          <button
+            onClick={() => onPromptClick(hook)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer hover:scale-105"
+            style={{
+              background: "linear-gradient(135deg, rgba(168,85,247,0.12), rgba(236,72,153,0.12))",
+              borderColor: "rgba(236,72,153,0.25)",
+              color: "#fbcfe8",
+              borderWidth: 1,
+            }}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+            </svg>
+            Generate Caption
+          </button>
           {/* Score badge */}
           <span
             className="text-xs font-black tabular-nums px-2.5 py-1 rounded-full border shadow-sm"
             style={{ background: "transparent", color, borderColor: color }}
           >
-            ⭐ {hook.engagementScore}
+            {hook.engagementScore}
           </span>
           <CopyButton text={hook.hook} />
         </div>
@@ -367,13 +359,13 @@ function ViralPostCard({ post, rank }: { post: TopPost; rank: number }) {
       {/* Engagement row */}
       <div className="flex items-center gap-4">
         <span className="text-xs font-semibold" style={{ color: "#6b7280" }}>
-          👍 {fmtNum(post.reactionsCount)}
+          {fmtNum(post.reactionsCount)} reactions
         </span>
         <span className="text-xs font-semibold" style={{ color: "#6b7280" }}>
-          💬 {fmtNum(post.commentsCount)}
+          {fmtNum(post.commentsCount)} comments
         </span>
         <span className="text-xs font-semibold" style={{ color: "#6b7280" }}>
-          🔄 {fmtNum(post.repostsCount)}
+          {fmtNum(post.repostsCount)} reposts
         </span>
         {post.postUrl && (
           <a
@@ -383,7 +375,7 @@ function ViralPostCard({ post, rank }: { post: TopPost; rank: number }) {
             className="ml-auto text-[11px] font-semibold hover:underline transition-colors"
             style={{ color: "#00a0dc" }}
           >
-            View ↗
+            View post
           </a>
         )}
       </div>
@@ -414,9 +406,10 @@ function SiennaPageInner() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [manualInput, setManualInput] = useState(false);
   const [manualJson, setManualJson] = useState("");
-  const [promptModalHook, setPromptModalHook] = useState<HookVariant | null>(
-    null,
-  );
+  const [dinaModalHook, setDinaModalHook] = useState<HookVariant | null>(null);
+  const [dinaCaption, setDinaCaption] = useState<string>("");
+  const [dinaLoading, setDinaLoading] = useState(false);
+  const [dinaError, setDinaError] = useState("");
 
   const showToast = useCallback(
     (message: string, type: "success" | "error") => {
@@ -601,11 +594,64 @@ function SiennaPageInner() {
     );
   }
 
-  const toneOptions: { value: Tone; label: string; icon: string }[] = [
-    { value: "professional", label: "Professional", icon: "💼" },
-    { value: "conversational", label: "Conversational", icon: "💬" },
-    { value: "bold", label: "Bold", icon: "🔥" },
-    { value: "inspirational", label: "Inspirational", icon: "🚀" },
+  // Dina caption generation
+  async function handleDinaGenerate(hook: HookVariant) {
+    if (!result) return;
+    setDinaModalHook(hook);
+    setDinaCaption("");
+    setDinaError("");
+    setDinaLoading(true);
+
+    try {
+      const sourcePost = hook.sourcePostIndex != null
+        ? result.topPosts[hook.sourcePostIndex] || null
+        : null;
+
+      const res = await fetch("/api/sienna/dina", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          hook: {
+            type: hook.type,
+            hook: hook.hook,
+            rationale: hook.rationale,
+            emotionalTrigger: hook.emotionalTrigger,
+          },
+          sourcePost: sourcePost ? {
+            text: sourcePost.text,
+            openingLine: sourcePost.openingLine,
+            hookFormula: sourcePost.hookFormula,
+            reactionsCount: sourcePost.reactionsCount,
+          } : null,
+          voice: result.voice,
+          pattern: {
+            contentPillars: result.patterns.contentPillars,
+            topPostKeywords: result.patterns.topPostKeywords,
+            writingStyle: result.patterns.writingStyle,
+          },
+          tone: result.meta.tone,
+          creatorName: result.profiles[0]?.name || "Creator",
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setDinaError(data.error || "Failed to generate caption");
+      } else {
+        setDinaCaption(data.caption);
+      }
+    } catch {
+      setDinaError("Network error. Please try again.");
+    } finally {
+      setDinaLoading(false);
+    }
+  }
+
+  const toneOptions: { value: Tone; label: string }[] = [
+    { value: "professional", label: "Professional" },
+    { value: "conversational", label: "Conversational" },
+    { value: "bold", label: "Bold" },
+    { value: "inspirational", label: "Inspirational" },
   ];
 
   const totalPages = result ? Math.ceil(result.hooks.length / hooksPerPage) : 0;
@@ -829,7 +875,6 @@ function SiennaPageInner() {
                         color: tone === t.value ? "#e5e7eb" : "#6b7280",
                       }}
                     >
-                      <span className="text-base">{t.icon}</span>
                       <span className="text-xs font-semibold">{t.label}</span>
                     </button>
                   ))}
@@ -971,28 +1016,33 @@ function SiennaPageInner() {
               <div className="space-y-3.5">
                 {[
                   {
-                    icon: "📊",
+                    step: "01",
                     title: "Rank by engagement",
                     desc: "Posts scored: reactions + comments×3 + reposts×2",
                   },
                   {
-                    icon: "🔬",
+                    step: "02",
                     title: "Study top 30%",
                     desc: "Only high-performers analyzed — not all posts equally",
                   },
                   {
-                    icon: "🧬",
+                    step: "03",
                     title: "Extract formula",
                     desc: "Opening line, hook type, and pattern detected per post",
                   },
                   {
-                    icon: "⚡",
-                    title: "Derive hooks",
-                    desc: "New hooks mirror the exact viral formulas, not templates",
+                    step: "04",
+                    title: "AI-powered hooks",
+                    desc: "OpenAI generates dynamic, contextual hooks from real post data",
                   },
                 ].map((s, i) => (
                   <div key={i} className="flex items-start gap-3">
-                    <span className="text-base mt-0.5">{s.icon}</span>
+                    <span
+                      className="text-[10px] font-bold tabular-nums mt-0.5 w-5 shrink-0"
+                      style={{ color: "#c96ef5" }}
+                    >
+                      {s.step}
+                    </span>
                     <div>
                       <p
                         className="text-xs font-semibold"
@@ -1100,10 +1150,10 @@ function SiennaPageInner() {
                     className="text-sm font-semibold"
                     style={{ color: "#e5e7eb" }}
                   >
-                    Ranking posts by engagement…
+                    Generating AI-powered hooks…
                   </p>
                   <p className="text-xs mt-1" style={{ color: "#4b5268" }}>
-                    Extracting formulas from top performers
+                    Studying top posts with OpenAI
                   </p>
                 </div>
               </div>
@@ -1294,7 +1344,7 @@ function SiennaPageInner() {
                       className="text-xs font-bold uppercase tracking-widest mb-3"
                       style={{ color: "#3d3f52" }}
                     >
-                      🏆 Viral Posts Used as Hook Sources
+                      Viral Posts Used as Hook Sources
                     </p>
                     <div className="space-y-3">
                       {result.topPosts.map((post, i) => (
@@ -1327,7 +1377,7 @@ function SiennaPageInner() {
                         key={i + (currentPage - 1) * hooksPerPage}
                         hook={hook}
                         index={i + (currentPage - 1) * hooksPerPage}
-                        onPromptClick={setPromptModalHook}
+                        onPromptClick={handleDinaGenerate}
                       />
                     ))}
                   </div>
@@ -1423,13 +1473,13 @@ function SiennaPageInner() {
         </div>
       </main>
 
-      {/* ── Prompt Modal ── */}
-      {promptModalHook && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 animate-fade-in">
+      {/* ── Dina Caption Modal ── */}
+      {dinaModalHook && (
+        <div className="fixed inset-0 z-100 flex items-center justify-center p-4 animate-fade-in">
           {/* Backdrop */}
           <div
             className="absolute inset-0 bg-black/60 backdrop-blur-sm cursor-pointer"
-            onClick={() => setPromptModalHook(null)}
+            onClick={() => { setDinaModalHook(null); setDinaCaption(""); setDinaError(""); }}
           />
 
           {/* Modal Content */}
@@ -1445,103 +1495,115 @@ function SiennaPageInner() {
                 className="text-xl font-bold flex items-center gap-3"
                 style={{ color: "#f9fafb" }}
               >
-                <svg
-                  width="24"
-                  height="24"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  style={{ color: "#f472b6" }}
-                >
-                  <path d="m12 3-1.9 5.8a2 2 0 0 1-1.287 1.288L3 12l5.8 1.9a2 2 0 0 1 1.288 1.287L12 21l1.9-5.8a2 2 0 0 1 1.287-1.288L21 12l-5.8-1.9a2 2 0 0 1-1.288-1.287Z" />
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: "#c96ef5" }}>
+                  <path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
                 </svg>
-                Generate with Dina AI
+                Dina — Generated Caption
               </h2>
               <button
-                onClick={() => setPromptModalHook(null)}
+                onClick={() => { setDinaModalHook(null); setDinaCaption(""); setDinaError(""); }}
                 className="text-gray-400 hover:text-white transition-colors cursor-pointer"
               >
-                <svg
-                  width="20"
-                  height="20"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <line x1="18" y1="6" x2="6" y2="18" />
                   <line x1="6" y1="6" x2="18" y2="18" />
                 </svg>
               </button>
             </div>
 
-            <div className="space-y-6">
-              {/* Caption Prompt */}
-              {promptModalHook.dinaCaptionPrompt && (
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <h3
-                      className="text-sm font-semibold uppercase tracking-widest flex items-center gap-2"
-                      style={{ color: "#c96ef5" }}
-                    >
-                      📝 Generate Caption
-                    </h3>
-                    <CopyButton text={promptModalHook.dinaCaptionPrompt} />
-                  </div>
-                  <div
-                    className="rounded-xl p-4 text-sm leading-relaxed whitespace-pre-wrap border"
-                    style={{
-                      background: "rgba(255,255,255,0.03)",
-                      borderColor: "rgba(255,255,255,0.06)",
-                      color: "#d1d5db",
-                    }}
-                  >
-                    {promptModalHook.dinaCaptionPrompt}
-                  </div>
-                </div>
-              )}
-
-              {/* Image Prompt */}
-              {promptModalHook.dinaImagePrompt && (
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <h3
-                      className="text-sm font-semibold uppercase tracking-widest flex items-center gap-2"
-                      style={{ color: "#00e676" }}
-                    >
-                      🎨 Generate Image
-                    </h3>
-                    <CopyButton text={promptModalHook.dinaImagePrompt} />
-                  </div>
-                  <div
-                    className="rounded-xl p-4 text-sm leading-relaxed whitespace-pre-wrap border"
-                    style={{
-                      background: "rgba(255,255,255,0.03)",
-                      borderColor: "rgba(255,255,255,0.06)",
-                      color: "#d1d5db",
-                    }}
-                  >
-                    {promptModalHook.dinaImagePrompt}
-                  </div>
-                </div>
-              )}
+            {/* Hook reference */}
+            <div
+              className="rounded-xl p-4 mb-5 border"
+              style={{
+                background: "rgba(201,110,245,0.04)",
+                borderColor: "rgba(201,110,245,0.12)",
+              }}
+            >
+              <p className="text-[10px] font-bold uppercase tracking-widest mb-2" style={{ color: "#4b5268" }}>Based on hook</p>
+              <p className="text-sm" style={{ color: "#d1d5db" }}>{dinaModalHook.hook}</p>
+              <p className="text-[11px] mt-2" style={{ color: "#6b7280" }}>{dinaModalHook.type} — {dinaModalHook.emotionalTrigger}</p>
             </div>
 
-            <div className="mt-6 flex justify-end">
-              <button
-                onClick={() => setPromptModalHook(null)}
-                className="px-5 py-2.5 rounded-xl text-sm font-bold transition-all cursor-pointer border"
+            {/* Loading state */}
+            {dinaLoading && (
+              <div className="flex flex-col items-center justify-center py-12">
+                <div className="w-8 h-8 rounded-full border-2 border-purple-500/20 border-t-purple-400 animate-spin mb-4" />
+                <p className="text-sm font-medium" style={{ color: "#e5e7eb" }}>Dina is writing your caption...</p>
+                <p className="text-xs mt-1" style={{ color: "#4b5268" }}>Generating via OpenAI</p>
+              </div>
+            )}
+
+            {/* Error */}
+            {dinaError && (
+              <div
+                className="rounded-lg px-4 py-3 text-xs mb-4"
                 style={{
-                  background: "rgba(255,255,255,0.05)",
-                  borderColor: "rgba(255,255,255,0.1)",
-                  color: "#fff",
+                  background: "rgba(239,68,68,0.08)",
+                  border: "1px solid rgba(239,68,68,0.2)",
+                  color: "#f87171",
                 }}
               >
-                Close
-              </button>
+                {dinaError}
+              </div>
+            )}
+
+            {/* Generated caption */}
+            {dinaCaption && (
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <h3
+                    className="text-sm font-semibold uppercase tracking-widest"
+                    style={{ color: "#c96ef5" }}
+                  >
+                    Ready-to-Post Caption
+                  </h3>
+                  <CopyButton text={dinaCaption} />
+                </div>
+                <div
+                  className="rounded-xl p-5 text-sm leading-relaxed whitespace-pre-wrap border"
+                  style={{
+                    background: "rgba(255,255,255,0.03)",
+                    borderColor: "rgba(255,255,255,0.08)",
+                    color: "#e5e7eb",
+                  }}
+                >
+                  {dinaCaption}
+                </div>
+              </div>
+            )}
+
+            <div className="mt-6 flex items-center justify-between">
+              {dinaCaption && (
+                <button
+                  onClick={() => handleDinaGenerate(dinaModalHook)}
+                  disabled={dinaLoading}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold cursor-pointer transition-all disabled:opacity-50"
+                  style={{
+                    background: "rgba(201,110,245,0.08)",
+                    color: "#c96ef5",
+                    border: "1px solid rgba(201,110,245,0.2)",
+                  }}
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <polyline points="23 4 23 10 17 10" />
+                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                  </svg>
+                  Regenerate
+                </button>
+              )}
+              <div className="ml-auto">
+                <button
+                  onClick={() => { setDinaModalHook(null); setDinaCaption(""); setDinaError(""); }}
+                  className="px-5 py-2.5 rounded-xl text-sm font-bold transition-all cursor-pointer border"
+                  style={{
+                    background: "rgba(255,255,255,0.05)",
+                    borderColor: "rgba(255,255,255,0.1)",
+                    color: "#fff",
+                  }}
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </div>
         </div>
