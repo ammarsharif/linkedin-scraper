@@ -4,6 +4,7 @@ import asyncio
 import logging
 import re
 import random
+import sys
 from typing import List, Optional
 from playwright.async_api import Page
 
@@ -89,19 +90,39 @@ class PersonPostsScraper(BaseScraper):
         except Exception as e:
             logger.debug(f"DOM load timeout: {e}")
 
-        # Randomised extra time for dynamic content (2.5 – 5 s)
+        # Log current URL for debugging
+        current_url = self.page.url
+        print(f"[posts-debug] Current URL after nav: {current_url}", file=sys.stderr)
+
+        # Randomised extra time for dynamic content (2.5 - 5 s)
         await self.page.wait_for_timeout(random.randint(2500, 5000))
 
         # Try scrolling to trigger lazy loading
-        for attempt in range(3):
+        for attempt in range(5):
             await self._trigger_lazy_load()
 
-            # Check if any post URNs are present in the page
-            has_posts = await self.page.evaluate('''() => {
-                return document.body.innerHTML.includes('urn:li:activity:');
+            # Check multiple indicators for posts
+            page_info = await self.page.evaluate('''() => {
+                const html = document.body.innerHTML;
+                return {
+                    hasUrnActivity: html.includes('urn:li:activity:'),
+                    hasUrnUgcPost: html.includes('urn:li:ugcPost:'),
+                    hasUrnShare: html.includes('urn:li:share:'),
+                    hasFeedUpdate: !!document.querySelector('.feed-shared-update-v2'),
+                    hasOccludable: !!document.querySelector('.occludable-update'),
+                    hasScaffold: !!document.querySelector('[data-id]'),
+                    hasDataUrn: !!document.querySelector('[data-urn]'),
+                    feedContainerCount: document.querySelectorAll('.feed-shared-update-v2, .occludable-update, [data-urn], [data-id]').length,
+                    title: document.title,
+                    bodyLen: html.length,
+                };
             }''')
 
-            if has_posts:
+            print(f"[posts-debug] Attempt {attempt+1}: {page_info}", file=sys.stderr)
+
+            if (page_info.get('hasUrnActivity') or page_info.get('hasUrnUgcPost') or
+                page_info.get('hasUrnShare') or page_info.get('hasFeedUpdate') or
+                page_info.get('hasOccludable') or page_info.get('feedContainerCount', 0) > 0):
                 logger.debug(f"Posts found after attempt {attempt + 1}")
                 return
 
@@ -115,7 +136,7 @@ class PersonPostsScraper(BaseScraper):
         steps = random.randint(6, 12)
         current = 0
         for i in range(steps):
-            # Variable step size — humans don’t scroll in uniform increments
+            # Variable step size - humans don't scroll in uniform increments
             step = random.randint(200, 500)
             current = min(current + step, scroll_height)
             await self.page.evaluate(f'window.scrollTo(0, {current})')
@@ -132,7 +153,7 @@ class PersonPostsScraper(BaseScraper):
         """Scrape posts with scrolling to load more."""
         posts: List[Post] = []
         scroll_count = 0
-        max_scrolls = (limit // 3) + 3  # A bit more generous for person feeds
+        max_scrolls = (limit // 3) + 5  # More generous for person feeds
         
         while len(posts) < limit and scroll_count < max_scrolls:
             # Click all "...more" buttons to expand full post text
@@ -154,13 +175,13 @@ class PersonPostsScraper(BaseScraper):
         return posts[:limit]
     
     async def _click_all_see_more_buttons(self) -> None:
-        """Click all '…more' / 'see more' buttons on the page to expand truncated posts."""
+        """Click all '...more' / 'see more' buttons on the page to expand truncated posts."""
         try:
             # LinkedIn uses multiple selectors for the "see more" button
             see_more_selectors = [
                 'button.feed-shared-inline-show-more-text__see-more-less-toggle',
                 'button[class*="see-more"]',
-                'button:has-text("…more")',
+                'button:has-text("...more")',
                 'button:has-text("...more")',
                 'button:has-text("see more")',
                 'button:has-text("See more")',
@@ -178,14 +199,14 @@ class PersonPostsScraper(BaseScraper):
                                 btn = buttons.nth(i)
                                 if await btn.is_visible():
                                     await btn.click(timeout=2000)
-                                    # Randomised pause between clicks (0.2 – 0.8 s)
+                                    # Randomised pause between clicks (0.2 - 0.8 s)
                                     await asyncio.sleep(random.uniform(0.2, 0.8))
                             except Exception:
                                 continue
                 except Exception:
                     continue
             
-            # Wait for text to expand after clicking (randomised 0.8 – 1.8 s)
+            # Wait for text to expand after clicking (randomised 0.8 - 1.8 s)
             await self.page.wait_for_timeout(random.randint(800, 1800))
             logger.debug("Finished clicking 'see more' buttons")
             
@@ -193,128 +214,173 @@ class PersonPostsScraper(BaseScraper):
             logger.debug(f"Error clicking see more buttons: {e}")
     
     async def _extract_posts_from_page(self) -> List[Post]:
-        """Extract all visible posts from the current page state using JS."""
+        """Extract all visible posts from the current page state using JS.
+        
+        Uses a multi-strategy approach to handle LinkedIn's evolving DOM:
+        1. Try data-urn elements (classic approach)
+        2. Try feed-shared-update-v2 containers
+        3. Try occludable-update containers
+        4. Try data-id containers
+        5. Fallback: find any containers with activity URNs nearby
+        6. Last resort: find containers with substantial text content
+        """
+
+        # The JS extraction code
         posts_data = await self.page.evaluate('''() => {
             const posts = [];
-            const html = document.body.innerHTML;
-            
-            // Find all activity URNs in the page
-            const urnMatches = html.matchAll(/urn:li:activity:(\\d+)/g);
             const seenUrns = new Set();
-            
-            for (const match of urnMatches) {
-                const urn = match[0];
-                if (seenUrns.has(urn)) continue;
-                seenUrns.add(urn);
-                
-                // Find the element with this URN
-                const el = document.querySelector(`[data-urn="${urn}"]`);
-                if (!el) continue;
-                
-                // Get text content - try multiple selectors for person activity feed
+            const html = document.body.innerHTML;
+
+            // Helper: extract URN from an element or its ancestors / innerHTML
+            function findUrn(el) {
+                // Check data-urn attribute on element and ancestors
+                let node = el;
+                for (let i = 0; i < 5 && node; i++) {
+                    const urn = node.getAttribute && node.getAttribute('data-urn');
+                    if (urn && urn.includes('urn:li:')) return urn;
+                    const dataId = node.getAttribute && node.getAttribute('data-id');
+                    if (dataId && dataId.includes('urn:li:')) return dataId;
+                    node = node.parentElement;
+                }
+                // Search in innerHTML for URN patterns
+                const inner = el.innerHTML || '';
+                const m = inner.match(/urn:li:(?:activity|ugcPost|share):(\\d+)/);
+                if (m) return m[0];
+                // Check href links inside for activity URN
+                const links = el.querySelectorAll('a[href*="feed/update"]');
+                for (const link of links) {
+                    const href = link.getAttribute('href') || '';
+                    const hm = href.match(/urn:li:activity:(\\d+)/);
+                    if (hm) return hm[0];
+                }
+                return null;
+            }
+
+            // Helper: extract post data from a container element
+            function extractPostData(el, urn) {
+                // Get text content - try multiple selectors
                 let text = '';
                 const textSelectors = [
                     '.feed-shared-update-v2__description',
                     '.update-components-text',
                     '.feed-shared-text',
                     '[data-test-id="main-feed-activity-card__commentary"]',
-                    '.break-words.whitespace-pre-wrap',
+                    '.break-words',
                     '.feed-shared-inline-show-more-text',
                     '.update-components-text__text-view',
-                    'span[dir="ltr"]'
+                    'span[dir="ltr"]',
+                    '.feed-shared-text__text-view',
+                    '.update-components-update-v2__commentary',
+                    '[class*="commentary"]',
+                    '[class*="text-view"]'
                 ];
-                
+
                 for (const sel of textSelectors) {
-                    const textEl = el.querySelector(sel);
-                    if (textEl) {
-                        const t = textEl.innerText?.trim() || '';
-                        if (t.length > text.length && t.length > 10) {
-                            text = t;
-                        }
-                    }
+                    try {
+                        const textEls = el.querySelectorAll(sel);
+                        textEls.forEach(textEl => {
+                            const t = textEl.innerText?.trim() || '';
+                            if (t.length > text.length && t.length > 5) {
+                                text = t;
+                            }
+                        });
+                    } catch(e) {}
                 }
-                
-                // Fallback: find the largest meaningful text block
-                if (!text || text.length < 20) {
-                    const allDivs = el.querySelectorAll('div, span');
-                    let maxLen = 0;
-                    allDivs.forEach(div => {
-                        const t = div.innerText?.trim() || '';
-                        if (t.length > maxLen && t.length > 30 && 
-                            !t.includes('followers') && 
-                            !t.includes('reactions') &&
+
+                // Fallback: largest meaningful text block
+                if (!text || text.length < 10) {
+                    const allEls = el.querySelectorAll('div, span, p');
+                    let maxLen = text.length;
+                    allEls.forEach(div => {
+                        const t = (div.innerText?.trim() || '');
+                        if (t.length > maxLen && t.length > 15 &&
+                            !t.includes('followers') &&
+                            !t.includes('Like') &&
+                            !t.match(/^\\d+\\s*(reactions?|comments?|reposts?)/i) &&
                             !t.match(/^\\d+[hdwmy]\\s/)) {
-                            const parent = div.parentElement;
-                            if (!parent?.classList?.contains('feed-shared-actor')) {
+                            // Avoid actor/header blocks
+                            const cls = (div.className || '') + (div.parentElement?.className || '');
+                            if (!cls.includes('actor') && !cls.includes('header')) {
                                 text = t;
                                 maxLen = t.length;
                             }
                         }
                     });
                 }
-                
-                // For person posts, allow shorter text (some posts are brief)
-                if (!text || text.length < 5) continue;
-                
-                // Get time posted
+
+                if (!text || text.length < 3) return null;
+
+                // Time posted
                 const timeEl = el.querySelector(
+                    'time, ' +
                     '[class*="actor__sub-description"], ' +
                     '[class*="update-components-actor__sub-description"], ' +
-                    'time, ' +
-                    '[class*="feed-shared-actor__sub-description"]'
+                    '[class*="feed-shared-actor__sub-description"], ' +
+                    'span[class*="visually-hidden"]'
                 );
-                const timeText = timeEl ? timeEl.innerText : '';
-                
-                // Get reactions count
+                let timeText = '';
+                if (timeEl) {
+                    timeText = timeEl.getAttribute('datetime') || timeEl.innerText || '';
+                }
+
+                // Reactions count
                 const reactionsEl = el.querySelector(
                     'button[aria-label*="reaction"], ' +
                     '[class*="social-details-social-counts__reactions"], ' +
-                    'span[class*="social-details-social-counts__reactions-count"]'
+                    'span[class*="social-details-social-counts__reactions-count"], ' +
+                    'span[class*="reactions-count"]'
                 );
                 const reactions = reactionsEl ? reactionsEl.innerText : '';
-                
-                // Get comments count
+
+                // Comments count
                 const commentsEl = el.querySelector(
                     'button[aria-label*="comment"], ' +
-                    '[class*="social-details-social-counts__comments"]'
+                    '[class*="social-details-social-counts__comments"], ' +
+                    'button[class*="comment"]'
                 );
                 const comments = commentsEl ? commentsEl.innerText : '';
-                
-                // Get reposts count
+
+                // Reposts count
                 const repostsEl = el.querySelector(
                     'button[aria-label*="repost"], ' +
-                    '[class*="social-details-social-counts__reposts"]'
+                    '[class*="social-details-social-counts__reposts"], ' +
+                    'button[class*="repost"]'
                 );
                 const reposts = repostsEl ? repostsEl.innerText : '';
-                
-                // Get images
+
+                // Images
                 const images = [];
-                el.querySelectorAll('img[src*="media"], img[src*="dms.licdn"]').forEach(img => {
-                    if (img.src && !img.src.includes('profile') && !img.src.includes('logo') && 
-                        !img.src.includes('static') && !img.src.includes('sprite')) {
+                el.querySelectorAll('img[src*="media"], img[src*="dms.licdn"], img[src*="media-exp"]').forEach(img => {
+                    if (img.src && !img.src.includes('profile') && !img.src.includes('logo') &&
+                        !img.src.includes('static') && !img.src.includes('sprite') &&
+                        !img.src.includes('ghost') && img.naturalWidth > 50) {
                         images.push(img.src);
                     }
                 });
-                
-                // Get video URL if present
+
+                // Video
                 let videoUrl = null;
-                const videoEl = el.querySelector('video source, video[src]');
+                const videoEl = el.querySelector('video source, video[src], [data-sources]');
                 if (videoEl) {
                     videoUrl = videoEl.getAttribute('src') || videoEl.getAttribute('data-src') || null;
                 }
-                
-                // Get article/link URL if present
+
+                // Article URL
                 let articleUrl = null;
                 const articleEl = el.querySelector(
                     'a[class*="feed-shared-article"], ' +
                     'a[class*="update-components-article"], ' +
-                    'a[data-tracking-control-name*="article"]'
+                    'a[data-tracking-control-name*="article"], ' +
+                    'a[class*="app-aware-link"][href*="http"]'
                 );
                 if (articleEl) {
-                    articleUrl = articleEl.getAttribute('href') || null;
+                    const href = articleEl.getAttribute('href') || '';
+                    if (href && !href.includes('linkedin.com/in/') && !href.includes('/feed/')) {
+                        articleUrl = href;
+                    }
                 }
-                
-                posts.push({
+
+                return {
                     urn: urn,
                     text: text.substring(0, 10000),
                     timeText: timeText,
@@ -324,18 +390,124 @@ class PersonPostsScraper(BaseScraper):
                     images: images,
                     videoUrl: videoUrl,
                     articleUrl: articleUrl
+                };
+            }
+
+            // == Strategy 1: Find elements with data-urn attribute ==
+            document.querySelectorAll('[data-urn*="urn:li:"]').forEach(el => {
+                const urn = el.getAttribute('data-urn');
+                if (!urn || seenUrns.has(urn)) return;
+                seenUrns.add(urn);
+                const data = extractPostData(el, urn);
+                if (data) posts.push(data);
+            });
+
+            // == Strategy 2: Find feed-shared-update-v2 containers ==
+            if (posts.length === 0) {
+                document.querySelectorAll('.feed-shared-update-v2').forEach(el => {
+                    const urn = findUrn(el);
+                    if (!urn || seenUrns.has(urn)) return;
+                    seenUrns.add(urn);
+                    const data = extractPostData(el, urn);
+                    if (data) posts.push(data);
                 });
             }
-            
-            return posts;
+
+            // == Strategy 3: Find occludable-update containers ==
+            if (posts.length === 0) {
+                document.querySelectorAll('.occludable-update').forEach(el => {
+                    const urn = findUrn(el);
+                    if (!urn || seenUrns.has(urn)) return;
+                    seenUrns.add(urn);
+                    const data = extractPostData(el, urn);
+                    if (data) posts.push(data);
+                });
+            }
+
+            // == Strategy 4: Find data-id containers ==
+            if (posts.length === 0) {
+                document.querySelectorAll('[data-id*="urn:li:"]').forEach(el => {
+                    const urn = el.getAttribute('data-id');
+                    if (!urn || seenUrns.has(urn)) return;
+                    seenUrns.add(urn);
+                    const data = extractPostData(el, urn);
+                    if (data) posts.push(data);
+                });
+            }
+
+            // == Strategy 5 (nuclear): scan for ANY URN in innerHTML, walk UP to container ==
+            if (posts.length === 0) {
+                const urnRegex = /urn:li:(?:activity|ugcPost|share):(\\d+)/g;
+                const allMatches = [...html.matchAll(urnRegex)];
+                const uniqueUrns = [...new Set(allMatches.map(m => m[0]))];
+
+                for (const urn of uniqueUrns) {
+                    if (seenUrns.has(urn)) continue;
+                    seenUrns.add(urn);
+
+                    // Try to find any element whose innerHTML contains this URN
+                    // and is a reasonable post container
+                    const candidates = document.querySelectorAll(
+                        'div[class*="update"], div[class*="feed"], div[class*="post"], ' +
+                        'article, li[class*="feed"], div[class*="occludable"]'
+                    );
+                    for (const cand of candidates) {
+                        if (cand.innerHTML.includes(urn)) {
+                            const data = extractPostData(cand, urn);
+                            if (data) {
+                                posts.push(data);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // == Strategy 6 (last resort): any container with substantial text ==
+            if (posts.length === 0) {
+                let idx = 0;
+                document.querySelectorAll(
+                    '.scaffold-finite-scroll__content > div, ' +
+                    '.scaffold-finite-scroll__content > li, ' +
+                    'main div[class*="feed"] > div, ' +
+                    'main section > div > div'
+                ).forEach(el => {
+                    const t = (el.innerText || '').trim();
+                    if (t.length > 30) {
+                        const syntheticUrn = 'urn:li:activity:fallback-' + idx;
+                        idx++;
+                        if (!seenUrns.has(syntheticUrn)) {
+                            seenUrns.add(syntheticUrn);
+                            const data = extractPostData(el, syntheticUrn);
+                            if (data) posts.push(data);
+                        }
+                    }
+                });
+            }
+
+            return { posts: posts, debug: { strategies_tried: 6, total_found: posts.length } };
         }''')
-        
+
+        debug_info = posts_data.get('debug', {})
+        raw_posts = posts_data.get('posts', [])
+        print(f"[posts-debug] Extraction result: {debug_info}, posts_found={len(raw_posts)}", file=sys.stderr)
+
         result: List[Post] = []
-        for data in posts_data:
-            activity_id = data['urn'].replace('urn:li:activity:', '')
+        for data in raw_posts:
+            urn = data.get('urn', '')
+            # Normalise URN for URL construction
+            activity_id = ''
+            m = re.search(r'(?:activity|ugcPost|share):(\d+)', urn)
+            if m:
+                activity_id = m.group(1)
+                canonical_urn = f"urn:li:activity:{activity_id}"
+            else:
+                canonical_urn = urn
+                activity_id = urn.split(':')[-1] if ':' in urn else urn
+
             post = Post(
-                linkedin_url=f"https://www.linkedin.com/feed/update/urn:li:activity:{activity_id}/",
-                urn=data['urn'],
+                linkedin_url=f"https://www.linkedin.com/feed/update/{canonical_urn}/" if activity_id else "",
+                urn=canonical_urn,
                 text=data['text'],
                 posted_date=self._extract_time_from_text(data.get('timeText', '')),
                 reactions_count=self._parse_count(data.get('reactions', '')),
@@ -346,7 +518,7 @@ class PersonPostsScraper(BaseScraper):
                 article_url=data.get('articleUrl')
             )
             result.append(post)
-        
+
         return result
     
     def _extract_time_from_text(self, text: str) -> Optional[str]:
@@ -361,7 +533,7 @@ class PersonPostsScraper(BaseScraper):
         if match:
             return match.group(1).strip()
         # Fall back to first part before bullet
-        parts = text.split('•')
+        parts = text.split('\u2022')
         if parts:
             return parts[0].strip()
         return None
@@ -381,14 +553,14 @@ class PersonPostsScraper(BaseScraper):
     async def _scroll_for_more_posts(self) -> None:
         """Scroll down to load more posts with human-like timing."""
         try:
-            # Occasionally use keyboard End, sometimes scroll by pixels — vary the approach
+            # Occasionally use keyboard End, sometimes scroll by pixels - vary the approach
             if random.random() < 0.5:
                 await self.page.keyboard.press('End')
             else:
                 scroll_by = random.randint(600, 1200)
                 await self.page.evaluate(f'window.scrollBy(0, {scroll_by})')
 
-            # Randomised wait: 1.5 – 3.5 s
+            # Randomised wait: 1.5 - 3.5 s
             await self.page.wait_for_timeout(random.randint(1500, 3500))
 
             # Also try clicking "Show more" buttons if present

@@ -129,6 +129,15 @@ def _do_scrape(cookie_string: str, profile_url: str, limit: int) -> dict:
                     posts = await posts_scraper.scrape(p_url, limit=limit)
                     print(f"[api] Found {len(posts)} posts", file=sys.stderr)
 
+                    # Debug: if no posts, dump page info
+                    if len(posts) == 0:
+                        final_url = browser.page.url
+                        page_title = await browser.page.title()
+                        html_snippet = await browser.page.evaluate('() => document.body.innerHTML.substring(0, 3000)')
+                        print(f"[api][DEBUG] Final URL: {final_url}", file=sys.stderr)
+                        print(f"[api][DEBUG] Page title: {page_title}", file=sys.stderr)
+                        print(f"[api][DEBUG] HTML snippet (first 3000 chars): {html_snippet}", file=sys.stderr)
+
                     result["posts"] = [
                         {
                             "urn": p.urn or "",
