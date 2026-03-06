@@ -46,6 +46,7 @@ interface HookVariant {
   sourcePostUrl?: string;
   derivedFrom?: string;
   sourcePostIndex?: number | null;
+  coreInsightExtracted?: string;
 }
 
 interface TopPost {
@@ -294,14 +295,23 @@ function HookCard({
         </button>
         {open && (
           <div
-            className="mt-3 px-4 py-3 rounded-lg text-xs leading-relaxed animate-fade-in"
+            className="mt-3 px-4 py-3 rounded-lg text-xs leading-relaxed animate-fade-in space-y-2"
             style={{
               background: "rgba(201,110,245,0.05)",
-              color: "#9ca3af",
+              color: "#d1d5db",
               border: "1px solid rgba(201,110,245,0.1)",
             }}
           >
-            {hook.rationale}
+            {hook.coreInsightExtracted && (
+              <p className="m-0">
+                <span className="font-bold opacity-80" style={{ color: "#c96ef5" }}>Core Idea:</span>{" "}
+                {hook.coreInsightExtracted}
+              </p>
+            )}
+            <p className="m-0">
+              <span className="font-bold opacity-80" style={{ color: "#c96ef5" }}>Hook Psychology:</span>{" "}
+              {hook.rationale}
+            </p>
           </div>
         )}
       </div>
@@ -352,8 +362,8 @@ function ViralPostCard({ post, rank }: { post: TopPost; rank: number }) {
         className="text-xs leading-relaxed mb-3 italic"
         style={{ color: "#9ca3af" }}
       >
-        "{post.openingLine}
-        {post.openingLine.length >= 119 ? "…" : ""}"
+        &quot;{post.openingLine}
+        {post.openingLine.length >= 119 ? "…" : ""}&quot;
       </p>
 
       {/* Engagement row */}
@@ -410,6 +420,7 @@ function SiennaPageInner() {
   const [dinaCaption, setDinaCaption] = useState<string>("");
   const [dinaLoading, setDinaLoading] = useState(false);
   const [dinaError, setDinaError] = useState("");
+  const [generatedCaptions, setGeneratedCaptions] = useState<Record<string, string>>({});
 
   const showToast = useCallback(
     (message: string, type: "success" | "error") => {
@@ -449,6 +460,10 @@ function SiennaPageInner() {
         };
         if (p.profiles && p.profiles.length > 0) setProfiles(p.profiles);
         setPosts(p.posts);
+      }
+      const captionsStr = localStorage.getItem("sienna_dina_captions");
+      if (captionsStr) {
+        setGeneratedCaptions(JSON.parse(captionsStr));
       }
     } catch {
       /* no payload */
@@ -595,11 +610,17 @@ function SiennaPageInner() {
   }
 
   // Dina caption generation
-  async function handleDinaGenerate(hook: HookVariant) {
+  async function handleDinaGenerate(hook: HookVariant, forceRegenerate = false) {
     if (!result) return;
     setDinaModalHook(hook);
-    setDinaCaption("");
     setDinaError("");
+
+    if (!forceRegenerate && generatedCaptions[hook.hook]) {
+      setDinaCaption(generatedCaptions[hook.hook]);
+      return;
+    }
+
+    setDinaCaption("");
     setDinaLoading(true);
 
     try {
@@ -639,6 +660,11 @@ function SiennaPageInner() {
         setDinaError(data.error || "Failed to generate caption");
       } else {
         setDinaCaption(data.caption);
+        setGeneratedCaptions((prev) => {
+          const updated = { ...prev, [hook.hook]: data.caption };
+          localStorage.setItem("sienna_dina_captions", JSON.stringify(updated));
+          return updated;
+        });
       }
     } catch {
       setDinaError("Network error. Please try again.");
@@ -792,7 +818,7 @@ function SiennaPageInner() {
                 style={{ color: "#ffffff" }}
               >
                 Learn from their{" "}
-                <span className="bg-clip-text text-transparent bg-gradient-to-r from-purple-500 to-pink-500">
+                <span className="bg-clip-text text-transparent bg-linear-to-r from-purple-500 to-pink-500">
                   most viral
                 </span>{" "}
                 posts
@@ -1478,8 +1504,7 @@ function SiennaPageInner() {
         <div className="fixed inset-0 z-100 flex items-center justify-center p-4 animate-fade-in">
           {/* Backdrop */}
           <div
-            className="absolute inset-0 bg-black/60 backdrop-blur-sm cursor-pointer"
-            onClick={() => { setDinaModalHook(null); setDinaCaption(""); setDinaError(""); }}
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
           />
 
           {/* Modal Content */}
@@ -1575,7 +1600,7 @@ function SiennaPageInner() {
             <div className="mt-6 flex items-center justify-between">
               {dinaCaption && (
                 <button
-                  onClick={() => handleDinaGenerate(dinaModalHook)}
+                  onClick={() => handleDinaGenerate(dinaModalHook, true)}
                   disabled={dinaLoading}
                   className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold cursor-pointer transition-all disabled:opacity-50"
                   style={{

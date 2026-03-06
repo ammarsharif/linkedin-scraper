@@ -37,6 +37,7 @@ interface HookVariant {
   sourcePostUrl?: string;
   derivedFrom?: string;
   sourcePostIndex?: number | null;
+  coreInsightExtracted?: string;
 }
 
 interface TopPost {
@@ -451,41 +452,32 @@ async function generateHooksWithAI(
     postUrl: p.postUrl,
   }));
 
-  const systemPrompt = `You are Sienna, a viral LinkedIn hook engine. You reverse-engineer WHY a creator's top posts made people click "...see more" and generate hooks that exploit the same psychological triggers.
+  const systemPrompt = `You are Sienna, an elite LinkedIn ghostwriter and hook engine. Your goal is NOT to rewrite or paraphrase existing posts. Your goal is to extract the CORE INSIGHT (the fundamental truth or lesson) from a viral post and build an ENTIRELY NEW, hard-hitting hook around that same insight.
+
+THE PROBLEM WITH MOST HOOKS:
+Most AI tools just take a concept and change the wording. That's boring and obvious. 
+Elite creators take the same fundamental truth, but invent a completely new framing, new analogy, or new scenario to explain it. (e.g. If the insight is "an MVP is an experiment, not a product", the new hook might be "Your 'MVP' took 8 months to build. That's not an MVP. That's a failed product.")
 
 LINKEDIN "SEE MORE" PSYCHOLOGY:
-LinkedIn shows only the first 2-3 lines (~210 characters) before truncating with "...see more". The ENTIRE job of a hook is to make that click IRRESISTIBLE. Top-performing hooks do this by:
+LinkedIn truncates posts after 2-3 lines (~210 characters). The ONLY job of these opening lines is to force the click. You must create an INCOMPLETE thought.
 
-1. OPEN LOOP — Start a story or statement that's impossible to leave unfinished
-   Example: "I got fired on a Monday. By Friday, I had 3 offers. Here's what I did in between:"
-   
-2. CURIOSITY GAP — Promise specific value but withhold the answer
-   Example: "After analyzing 500 LinkedIn posts, I found the #1 pattern that separates 10x engagement from zero."
-   
-3. PATTERN INTERRUPT — Say something unexpected that breaks the scroll
-   Example: "Stop writing LinkedIn posts. Seriously. Do this instead:"
-   
-4. SPECIFIC NUMBERS + INCOMPLETE INFO — Lead with data but leave the insight behind the fold
-   Example: "I spent 3 years building something nobody asked for. It now makes $40k/month."
-   
-5. CONTRARIAN BAIT — Challenge a widely-held belief to spark curiosity
-   Example: "Everyone is wrong about personal branding. Here's what actually builds authority:"
+PROVEN HOOK FRAMEWORKS (Use these to build entirely new angles):
+1. THE BRUTAL TRUTH — State a harsh reality that challenges the status quo. 
+2. THE UNTOLD SECRET — Promise to reveal the real reason behind something.
+3. THE MISTAKE EXPOSE — Highlight a specific error everyone is making without realizing it.
+4. THE PARADIGM SHIFT — Contrast the old, wrong way of thinking with the new, right way.
+5. THE VULNERABLE CONFESSION — Share a raw, seemingly negative experience that has a hidden lesson.
+6. THE SHOCKING STAT/RESULT — Lead with an unbelievable outcome or timeline to create a curiosity gap.
 
-6. CONFESSION / VULNERABILITY — Open with something raw that demands more context
-   Example: "I almost quit last month. Not because of money. Because of something no one talks about."
-
-CRITICAL RULES:
-- Generate exactly ${hookCount} hooks
-- Each hook: 2-3 lines max, MUST fit within LinkedIn's ~210 character preview
-- The hook MUST create an INCOMPLETE thought — the reader needs to click "see more" to get the payoff
-- ABSOLUTELY NO emojis
-- Every hook MUST be about THIS CREATOR's actual topics (study their posts)
-- Use this creator's vocabulary, rhythm, and sentence patterns
-- Each hook uses a DIFFERENT formula from the list above
-- End hooks with a colon, ellipsis, or cliffhanger — NEVER complete the thought
-- Tone: ${tone.toUpperCase()}
-- BANNED: "Unlock", "Delve", "Elevate", "Dive in", "In today's fast-paced world", "Game-changer", "Revolutionize", "Navigate", "Harness"
-- sourcePostIndex: reference which real post inspired this hook
+CRITICAL RULES FOR GENERATION:
+- Generate exactly ${hookCount} hooks.
+- NEVER JUST REWORD the original post. Extract the IDEA, but create a 100% NEW execution (new words, scenarios, examples, bold claims).
+- Each hook: 2-3 lines max, MUST fit within LinkedIn's ~210 character preview.
+- End hooks with a colon, ellipsis, or cliffhanger — NEVER complete the thought before the click.
+- Use this creator's vocabulary, rhythm, and sentence patterns, applied to the NEW framing.
+- ABSOLUTELY NO emojis.
+- Tone: ${tone.toUpperCase()}.
+- BANNED: "Unlock", "Delve", "Elevate", "Dive in", "In today's fast-paced world", "Game-changer", "Revolutionize", "Navigate", "Harness".
 
 Respond in valid JSON only. No markdown, no code fences.
 
@@ -493,25 +485,27 @@ JSON Schema:
 {
   "hooks": [
     {
-      "type": "formula name (e.g. 'Open Loop', 'Curiosity Gap', 'Pattern Interrupt', 'Data Cliffhanger', 'Contrarian Bait', 'Confession')",
-      "hook": "the 2-3 line hook that ends BEFORE the payoff",
-      "rationale": "1 sentence: why this creates a 'see more' click, referencing the source post",
+      "type": "Framework name (e.g. 'The Brutal Truth')",
+      "coreInsightExtracted": "What is the fundamental truth you stole from the original post? (1 sentence max)",
+      "hook": "The 2-3 line entirely new hook that ends BEFORE the payoff",
+      "rationale": "Why this completely new framing forces a click better than the original",
       "emotionalTrigger": "1 phrase (3-5 words): the psychological pull",
       "engagementScore": 70-99,
       "sourcePostIndex": 0-based index or null,
-      "derivedFrom": "e.g. 'Post #1 structure' or 'Top 3 theme blend'"
+      "derivedFrom": "e.g. 'Post #1 core idea'"
     }
   ],
   "aiKeywords": ["up to 10 keywords from the posts that drive engagement"],
   "aiInsight": "1-2 sentences on what makes this creator's hooks irresistible"
 }`;
 
-  const userPrompt = `Study these viral posts from ${name}. Pay attention to how their OPENING LINES create curiosity that forces the "see more" click. Then generate ${hookCount} hooks that exploit the same psychology on the same topics.
+  const userPrompt = `Analyze these viral posts from ${name}. 
+DO NOT simply paraphrase them. Identify the underlying "Aha!" moment or core lesson in each. Then, using their unique voice and style, write ${hookCount} completely fresh hooks that teach those same lessons through new lenses, using the proven frameworks.
 
 CREATOR:
 ${profiles.map((p) => `${p.name} — ${p.headline}${p.location ? ` (${p.location})` : ""}`).join("\n")}
 
-=== THEIR TOP POSTS (study the opening lines especially) ===
+=== THEIR TOP POSTS (Find the core truth, ignore the specific wording) ===
 ${topPostSummaries.map((p) => `
 [POST #${p.rank}] ${p.reactions} reactions | ${p.comments} comments | ${p.reposts} reposts | Score: ${p.engagementScore}
 Formula: ${p.hookFormula}
@@ -520,7 +514,7 @@ Full post:
 ${p.fullText}
 `).join("\n---\n")}
 
-=== PATTERNS DETECTED ===
+=== CREATOR'S LINGUISTIC FINGERPRINT ===
 Writing style: ${pattern.writingStyle}
 Content pillars: ${pattern.contentPillars.join(", ") || "general professional"}
 Recurring keywords: ${pattern.topPostKeywords.join(", ")}
@@ -536,13 +530,15 @@ Style traits: ${[
     voice.usesLists && "numbered lists",
   ].filter(Boolean).join(", ") || "direct statements"}
 
-Generate ${hookCount} hooks. EVERY hook must:
-1. Be about THIS creator's actual topics (${pattern.contentPillars.slice(0, 2).join(", ") || "their niche"})
-2. Create an OPEN LOOP or CURIOSITY GAP that forces "see more"
-3. End with incomplete information — colon, ellipsis, or cliffhanger
-4. Fit within ~210 characters (LinkedIn's preview limit)
-5. Use this creator's own words and patterns
-6. Link to a specific source post via sourcePostIndex`;
+YOUR TASK:
+Generate ${hookCount} hooks. For each hook:
+1. Pick a core concept/lesson from one of the posts.
+2. Throw away the original post's exact wording.
+3. Build a totally new, scroll-stopping 2-3 line hook around that concept. You must elevate the idea.
+4. It MUST end with an incomplete thought (colon, ellipsis, etc.) to force the "see more" click.
+5. Apply the Creator's Linguistic Fingerprint to make it sound exactly like them.
+6. Fit within ~210 characters (LinkedIn's preview limit).
+7. Link it back to the source post via sourcePostIndex.`;
 
   const completion = await openai.chat.completions.create({
     model: "gpt-4o-mini",
@@ -565,6 +561,7 @@ Generate ${hookCount} hooks. EVERY hook must:
       engagementScore: number;
       sourcePostIndex?: number | null;
       derivedFrom?: string;
+      coreInsightExtracted?: string;
     }>;
     aiKeywords?: string[];
     aiInsight?: string;
@@ -597,6 +594,7 @@ Generate ${hookCount} hooks. EVERY hook must:
       sourcePostUrl: sourcePost?.postUrl,
       derivedFrom: aiHook.derivedFrom || "AI analysis",
       sourcePostIndex: sourceIdx,
+      coreInsightExtracted: aiHook.coreInsightExtracted,
     };
   });
 
