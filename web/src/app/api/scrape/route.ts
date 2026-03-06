@@ -30,78 +30,7 @@ interface BridgeResult {
   error?: string;
 }
 
-async function runPlaywrightBridge(
-  cookieString: string,
-  profileUrl: string,
-  limit: number
-): Promise<BridgeResult> {
-  return new Promise((resolve, reject) => {
-    // scraper_bridge.py lives one level up from the web/ directory
-    const bridgePath = path.join(process.cwd(), "scraper_bridge.py");
-    const payload = JSON.stringify({ cookieString, profileUrl, limit });
-
-    console.log(`[bridge] Spawning python scraper_bridge.py for ${profileUrl}`);
-    console.log(`[bridge] Bridge path: ${bridgePath}`);
-
-    // Try "python" first, then "python3" on systems where that's the alias
-    const pythonCmd = process.platform === "win32" ? "python" : "python3";
-    const proc = spawn(pythonCmd, [bridgePath], {
-      cwd: path.join(process.cwd(), ".."), // Run from project root
-      env: {
-        ...process.env,
-        PYTHONIOENCODING: "utf-8",   // Force UTF-8 stdout/stderr on Windows
-        PYTHONUTF8: "1",             // Python 3.7+ UTF-8 mode flag
-      },
-    });
-
-    let stdout = "";
-    let stderr = "";
-
-    proc.stdin.write(payload);
-    proc.stdin.end();
-
-    proc.stdout.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString();
-    });
-    proc.stderr.on("data", (chunk: Buffer) => {
-      const line = chunk.toString();
-      stderr += line;
-      // Surface Python logs in Next.js terminal
-      process.stdout.write(`[py] ${line}`);
-    });
-
-    const timer = setTimeout(() => {
-      proc.kill("SIGTERM");
-      reject(new Error("Python bridge timed out after 180 seconds"));
-    }, 180_000);
-
-    proc.on("close", (code) => {
-      clearTimeout(timer);
-      console.log(`[bridge] Process exited with code ${code}`);
-      if (stderr) console.log(`[bridge] stderr: ${stderr.slice(-500)}`);
-
-      if (code !== 0) {
-        reject(new Error(`Bridge exited ${code}: ${stderr.slice(-300)}`));
-        return;
-      }
-
-      // The bridge prints one JSON line to stdout
-      const lastLine = stdout.trim().split("\n").pop() ?? "";
-      try {
-        const parsed = JSON.parse(lastLine) as BridgeResult;
-        resolve(parsed);
-      } catch {
-        reject(new Error(`Failed to parse bridge JSON output: ${lastLine.slice(0, 200)}`));
-      }
-    });
-
-    proc.on("error", (err) => {
-      clearTimeout(timer);
-      console.error("[bridge] spawn error:", err);
-      reject(err);
-    });
-  });
-}
+// ── Utility Removed: The legacy Python bridge caller runPlaywrightBridge() is now obsolete. Data is fetched via FastAPI ──
 
 // ── Route handler ───────────────────────────────────────────────────────────
 
@@ -137,13 +66,29 @@ export async function POST(req: NextRequest) {
 
     const limit = Math.min(Math.max(1, Number(postsLimit) || 10), 50);
 
-    console.log(`[scrape] Starting bridge scrape for ${vanityName}, limit=${limit}`);
+    console.log(`[scrape] Calling FastAPI endpoint for ${vanityName}, limit=${limit}`);
 
-    const result = await runPlaywrightBridge(cookieString, profileUrl.trim(), limit);
+    // Call the new FastAPI endpoint instead of spawning bridge process
+    const backendUrl = process.env.PYTHON_BACKEND_URL?.replace(/\/$/, '') || "http://127.0.0.1:8000";
+    const apiResponse = await fetch(`${backendUrl}/scrape`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        cookieString,
+        profileUrl: profileUrl.trim(),
+        limit,
+      }),
+    });
 
-    if (result.error) {
-      return NextResponse.json({ error: result.error }, { status: 500 });
+    if (!apiResponse.ok) {
+        const errorText = await apiResponse.text();
+        console.error(`[scrape] FastAPI error status ${apiResponse.status}:`, errorText);
+        return NextResponse.json({ error: `Scraper API error: ${apiResponse.statusText}. Details: ${errorText}` }, { status: apiResponse.status });
     }
+
+    const result = await apiResponse.json();
 
     console.log(`[scrape] Done — profile: "${result.profile.name}", posts: ${result.posts.length}`);
 

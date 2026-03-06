@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import random
+import traceback
 from pathlib import Path
 from typing import Optional, Dict, Any
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page, Playwright
@@ -150,6 +151,7 @@ class BrowserManager:
             logger.info("Browser context and page created")
 
         except Exception as e:
+            logger.error(f"Error starting browser in browser.py:\n{traceback.format_exc()}")
             await self.close()
             raise NetworkError(f"Failed to start browser: {e}")
 

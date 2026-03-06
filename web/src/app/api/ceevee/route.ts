@@ -74,67 +74,7 @@ function getOpenAIClient(): OpenAI {
 
 // ── Python bridge (reuse the scraper) ────────────────────────────────────────
 
-async function runPlaywrightBridge(
-  cookieString: string,
-  profileUrl: string,
-  limit: number,
-): Promise<BridgeResult> {
-  return new Promise((resolve, reject) => {
-    const bridgePath = path.join(process.cwd(), "scraper_bridge.py");
-    const payload = JSON.stringify({ cookieString, profileUrl, limit });
-
-    console.log(`[ceevee-bridge] Scraping ${profileUrl} (limit=${limit})`);
-
-    const pythonCmd = process.platform === "win32" ? "python" : "python3";
-    const proc = spawn(pythonCmd, [bridgePath], {
-      cwd: path.join(process.cwd(), ".."),
-      env: {
-        ...process.env,
-        PYTHONIOENCODING: "utf-8",
-        PYTHONUTF8: "1",
-      },
-    });
-
-    let stdout = "";
-    let stderr = "";
-
-    proc.stdin.write(payload);
-    proc.stdin.end();
-
-    proc.stdout.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString();
-    });
-    proc.stderr.on("data", (chunk: Buffer) => {
-      const line = chunk.toString();
-      stderr += line;
-      process.stdout.write(`[ceevee-py] ${line}`);
-    });
-
-    const timer = setTimeout(() => {
-      proc.kill("SIGTERM");
-      reject(new Error("Scraper timed out after 270 seconds"));
-    }, 270_000);
-
-    proc.on("close", (code) => {
-      clearTimeout(timer);
-      if (code !== 0) {
-        reject(new Error(`Bridge exited ${code}: ${stderr.slice(-300)}`));
-        return;
-      }
-      const lastLine = stdout.trim().split("\n").pop() ?? "";
-      try {
-        resolve(JSON.parse(lastLine) as BridgeResult);
-      } catch {
-        reject(new Error(`Failed to parse bridge output: ${lastLine.slice(0, 200)}`));
-      }
-    });
-
-    proc.on("error", (err) => {
-      clearTimeout(timer);
-      reject(err);
-    });
-  });
-}
+// ── Python bridge (Legacy function removed, data fetched via FastAPI) ──
 
 // ── Utility ───────────────────────────────────────────────────────────────────
 
@@ -356,14 +296,27 @@ export async function POST(req: NextRequest) {
       }
 
       const limit = Math.min(Math.max(1, Number(postsLimit) || 10), 50);
-      console.log(`[ceevee] Scraping profile: ${profileUrl}, limit=${limit}`);
+      console.log(`[ceevee] Fetching scrape data via API: ${profileUrl}, limit=${limit}`);
 
-      const result = await runPlaywrightBridge(cookieString, profileUrl.trim(), limit);
+      const backendUrl = process.env.PYTHON_BACKEND_URL?.replace(/\/$/, '') || "http://127.0.0.1:8000";
+      const apiResponse = await fetch(`${backendUrl}/scrape`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          cookieString,
+          profileUrl: profileUrl.trim(),
+          limit,
+        }),
+      });
 
-      if (result.error) {
-        return NextResponse.json({ error: result.error }, { status: 500 });
+      if (!apiResponse.ok) {
+        const errorText = await apiResponse.text();
+        return NextResponse.json({ error: `Scraper API error: ${apiResponse.statusText}. Details: ${errorText}` }, { status: apiResponse.status });
       }
 
+      const result = await apiResponse.json();
       profile = result.profile;
       posts = result.posts;
     } else {
