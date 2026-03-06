@@ -46,6 +46,16 @@ export default function ScraperPage() {
     type: "success" | "error";
   } | null>(null);
 
+  // UX: Loading stages for long scrapes
+  const [stageIndex, setStageIndex] = useState(0);
+  const stages = [
+    "Initializing secure connection",
+    "Loading profile structure",
+    "Scrolling through recent activity",
+    "Extracting posts & engagement",
+    "Finalizing raw data parsing",
+  ];
+
   // Check auth
   useEffect(() => {
     async function checkAuth() {
@@ -91,6 +101,24 @@ export default function ScraperPage() {
       }));
     }
   }, [profileUrls, postsLimit, results]);
+
+  // Advance stage index over time during scraping to give user feedback
+  useEffect(() => {
+    if (!loading || !currentProfile) {
+      setStageIndex(0);
+      return;
+    }
+
+    setStageIndex(0);
+    const timers = [
+      setTimeout(() => setStageIndex(1), 8000),      // loading structure
+      setTimeout(() => setStageIndex(2), 20000),     // scrolling
+      setTimeout(() => setStageIndex(3), 35000),     // fetching posts
+      setTimeout(() => setStageIndex(4), 50000),     // finalizing
+    ];
+
+    return () => timers.forEach(clearTimeout);
+  }, [loading, currentProfile]);
 
   const showToast = useCallback(
     (message: string, type: "success" | "error") => {
@@ -504,26 +532,57 @@ export default function ScraperPage() {
 
             {/* Progress indicator */}
             {loading && currentProfile && (
-              <div className="glass-card p-4 animate-fade-in">
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="spinner" />
-                  <span className="text-sm font-medium">
-                    Scraping profile {progress.current} of {progress.total}
-                  </span>
+              <div className="glass-card p-5 animate-fade-in border border-[#00b4d8]/20 shadow-[0_0_30px_rgba(0,180,216,0.1)]">
+                <div className="flex items-start gap-4 mb-5">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#00b4d8]/10 text-[#00b4d8] shadow-inner mb-2 lg:mb-0">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M2 12h4l3-9 5 18 3-9h5" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold bg-linear-to-r from-[#0077B5] to-[#00b4d8] bg-clip-text text-transparent">
+                      Scraping Profile {progress.current} of {progress.total}
+                    </h3>
+                    <p
+                      className="text-xs font-mono mt-0.5 truncate max-w-[280px]"
+                      style={{ color: "var(--text-muted)" }}
+                    >
+                      {currentProfile}
+                    </p>
+                  </div>
                 </div>
-                <p
-                  className="text-xs font-mono truncate"
-                  style={{ color: "var(--text-muted)" }}
-                >
-                  {currentProfile}
-                </p>
-                <div className="mt-3 h-1.5 rounded-full bg-white/5 overflow-hidden">
+
+                {/* Animated Stages */}
+                <div className="space-y-3.5 mb-5 px-1">
+                  {stages.map((stage, idx) => (
+                    <div key={idx} className={`flex items-center gap-3 text-sm transition-all duration-500 ${idx > stageIndex ? 'opacity-30' : 'opacity-100'} ${idx === stageIndex ? 'scale-105 transform translate-x-1.5 origin-left' : ''}`}>
+                      {idx < stageIndex ? (
+                        <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-green-500/20 text-green-500 shadow-sm shadow-green-500/20">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                          </svg>
+                        </div>
+                      ) : idx === stageIndex ? (
+                        <div className="spinner h-5 w-5 shrink-0" style={{ borderLeftColor: '#00b4d8', borderWidth: '2px' }} />
+                      ) : (
+                        <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-white/20 text-[10px] text-white/40">
+                          {idx + 1}
+                        </div>
+                      )}
+                      <span className={`${idx === stageIndex ? 'text-white font-medium' : 'text-white/60'}`}>{stage}...</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="h-1.5 rounded-full bg-white/5 overflow-hidden ring-1 ring-white/10">
                   <div
-                    className="h-full rounded-full bg-gradient-to-r from-[#0077B5] to-[#00b4d8] transition-all duration-500"
+                    className="h-full rounded-full bg-linear-to-r from-[#0077B5] to-[#00b4d8] transition-all duration-1000 ease-in-out relative flex items-center justify-end"
                     style={{
-                      width: `${(progress.current / progress.total) * 100}%`,
+                      width: `${Math.max(5, ((stageIndex + 1) / stages.length) * 100)}%`,
                     }}
-                  />
+                  >
+                    <div className="absolute inset-0 bg-white/20 animate-pulse"></div>
+                  </div>
                 </div>
               </div>
             )}
