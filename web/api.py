@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import asyncio
 import json
@@ -25,6 +26,15 @@ from linkedin_scraper.scrapers.person_posts import PersonPostsScraper
 from linkedin_scraper.scrapers.person import PersonScraper
 
 app = FastAPI(title="LinkedIn Scraper API")
+
+# ── CORS: Allow Vercel-deployed frontend (and any origin) to reach this API ──
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 class ScrapeRequest(BaseModel):
     cookieString: str
