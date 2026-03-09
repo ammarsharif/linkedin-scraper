@@ -43,6 +43,8 @@ interface StoredProfile {
   achievementsMentioned?: string[];
   emailAddress?: string;
   emailsSent: EmailRecord[];
+  draftSubject?: string;
+  draftBody?: string;
   scrapedAt: string;
   lastUpdated: string;
 }
