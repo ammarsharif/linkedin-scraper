@@ -78,6 +78,19 @@ def _jitter(lo: float = 1.5, hi: float = 4.5) -> float:
 async def _human_pause(lo: float = 1.5, hi: float = 4.5) -> None:
     await asyncio.sleep(_jitter(lo, hi))
 
+def prettify_vanity(vanity: str) -> str:
+    """Transform m-ammar-sharif-123 into Ammar Sharif."""
+    if not vanity: return "Unknown"
+    # remove leading m- or in-
+    name = re.sub(r'^(m|in)-', '', vanity)
+    # remove trailing numbers/ids (e.g. -14868919b or -123456)
+    name = re.sub(r'-[0-9a-zA-Z]{5,}$', '', name)
+    name = re.sub(r'-[0-9]+$', '', name)
+    # replace dashes/dots with spaces
+    name = name.replace('-', ' ').replace('.', ' ')
+    # capitalize
+    return name.title().strip() or vanity.title()
+
 def _do_scrape(cookie_string: str, profile_url: str, limit: int) -> dict:
     import sys
     import asyncio
@@ -98,7 +111,7 @@ def _do_scrape(cookie_string: str, profile_url: str, limit: int) -> dict:
 
         result = {
             "profile": {
-                "name": vanity_name,
+                "name": prettify_vanity(vanity_name),
                 "headline": "",
                 "location": "",
                 "profileUrl": p_url,
@@ -125,9 +138,9 @@ def _do_scrape(cookie_string: str, profile_url: str, limit: int) -> dict:
                     
                     result["profile"].update(person.model_dump())
                     result["profile"]["headline"] = person.job_title or ""
-                    result["profile"]["name"] = person.name or vanity_name
+                    result["profile"]["name"] = person.name or prettify_vanity(vanity_name)
                     result["profile"]["location"] = person.location or ""
-                    print(f"[api] Profile scraped: {person.name!r}", file=sys.stderr)
+                    print(f"[api] Profile scraped: {result['profile']['name']!r}", file=sys.stderr)
                 except Exception as e:
                     print(f"[api] Profile scrape error: {e}", file=sys.stderr)
                     if "Not logged in" in str(e) or "authenticate" in str(e).lower():

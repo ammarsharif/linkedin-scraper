@@ -59,33 +59,58 @@ class PersonScraper(BaseScraper):
             await self.callback.on_progress(f"Got name: {name}", 20)
 
             # Check open to work
-            open_to_work = await self._check_open_to_work()
+            open_to_work = False
+            try:
+                open_to_work = await self._check_open_to_work()
+            except: pass
 
             # Get about
-            about = await self._get_about()
-            await self.callback.on_progress("Got about section", 30)
+            about = None
+            try:
+                about = await self._get_about()
+                await self.callback.on_progress("Got about section", 30)
+            except: pass
 
             # Scroll to load content
-            await self.scroll_page_to_half()
-            await self.scroll_page_to_bottom(pause_time=0.5, max_scrolls=3)
+            try:
+                await self.scroll_page_to_half()
+                await self.scroll_page_to_bottom(pause_time=0.5, max_scrolls=3)
+            except: pass
 
             # Get experiences
-            experiences = await self._get_experiences(linkedin_url)
-            await self.callback.on_progress(f"Got {len(experiences)} experiences", 60)
+            experiences = []
+            try:
+                experiences = await self._get_experiences(linkedin_url)
+                await self.callback.on_progress(f"Got {len(experiences)} experiences", 60)
+            except: pass
 
-            educations = await self._get_educations(linkedin_url)
-            await self.callback.on_progress(f"Got {len(educations)} educations", 50)
+            # Get education
+            educations = []
+            try:
+                educations = await self._get_educations(linkedin_url)
+                await self.callback.on_progress(f"Got {len(educations)} educations", 50)
+            except: pass
 
-            interests = await self._get_interests(linkedin_url)
-            await self.callback.on_progress(f"Got {len(interests)} interests", 65)
+            # Get interests
+            interests = []
+            try:
+                interests = await self._get_interests(linkedin_url)
+                await self.callback.on_progress(f"Got {len(interests)} interests", 65)
+            except: pass
 
-            accomplishments = await self._get_accomplishments(linkedin_url)
-            await self.callback.on_progress(
-                f"Got {len(accomplishments)} accomplishments", 85
-            )
+            # Get accomplishments
+            accomplishments = []
+            try:
+                accomplishments = await self._get_accomplishments(linkedin_url)
+                await self.callback.on_progress(f"Got {len(accomplishments)} accomplishments", 85)
+            except: pass
 
-            contacts = await self._get_contacts(linkedin_url)
-            await self.callback.on_progress(f"Got {len(contacts)} contacts", 95)
+            # Get contacts
+            contacts = []
+            try:
+                contacts = await self._get_contacts(linkedin_url)
+                await self.callback.on_progress(f"Got {len(contacts)} contacts", 95)
+            except: pass
 
             person = Person(
                 linkedin_url=linkedin_url,
@@ -113,14 +138,16 @@ class PersonScraper(BaseScraper):
         """Extract name and location from profile."""
         try:
             # Try multiple selectors for name - LinkedIn's layout varies
-            name = "Unknown"
+            name = None
             name_selectors = [
                 "h1",
                 "h1.text-heading-xlarge",
                 ".pv-top-card--list .text-heading-xlarge",
-                '[data-anonymize="person-name"]',
                 ".pv-text-details__left-panel h1",
                 "section.artdeco-card h1",
+                ".pv-top-card-section__name",
+                '[data-anonymize="person-name"]',
+                "div.ph5.pb5 > div.mt2 > div > ul > li:first-child", # Older layout
             ]
             for selector in name_selectors:
                 extracted = await self.safe_extract_text(selector, default="", timeout=3000)
@@ -130,28 +157,25 @@ class PersonScraper(BaseScraper):
                     break
             
             # Fallback: try page title - format is "Name - Title | LinkedIn"
-            if name == "Unknown":
+            if not name or name == "Unknown":
                 try:
                     page_title = await self.page.title()
                     if page_title and "LinkedIn" in page_title:
-                        # Remove " | LinkedIn" suffix
-                        import re
-                        cleaned = re.sub(r'\s*\|\s*LinkedIn\s*$', '', page_title).strip()
-                        if cleaned:
-                            # Split by " - " to get name vs headline
-                            if " - " in cleaned:
-                                parts = cleaned.split(" - ")
-                                candidate = parts[0].strip()
-                            else:
-                                candidate = cleaned
-                            if candidate and len(candidate) > 1 and candidate != "LinkedIn":
-                                name = candidate
-                                logger.info(f"Got name from page title: {name}")
+                        # format is often "Name - Headline | LinkedIn" or "Name | LinkedIn"
+                        cleaned = page_title.split("|")[0].strip()
+                        if " - " in cleaned:
+                            candidate = cleaned.split(" - ")[0].strip()
+                        else:
+                            candidate = cleaned
+                        
+                        if candidate and len(candidate) > 1 and "LinkedIn" not in candidate:
+                            name = candidate
+                            logger.info(f"Got name from page title: {name}")
                 except Exception as e:
                     logger.debug(f"Error getting name from page title: {e}")
             
             # Fallback: try og:title meta tag
-            if name == "Unknown":
+            if not name or name == "Unknown":
                 try:
                     og_title = await self.page.evaluate('''() => {
                         const meta = document.querySelector('meta[property="og:title"]');
@@ -168,9 +192,12 @@ class PersonScraper(BaseScraper):
                                 candidate = cleaned
                             if candidate and len(candidate) > 1 and candidate != "LinkedIn":
                                 name = candidate
-                                logger.info(f"Got name from og:title: {name}")
                 except Exception as e:
                     logger.debug(f"Error getting name from og:title: {e}")
+            
+            # If still Unknown/None, return None to allow backend to fallback to vanity name correctly
+            if name == "Unknown":
+                 name = None
             
             # Try multiple selectors for location
             location_selectors = [
@@ -190,7 +217,7 @@ class PersonScraper(BaseScraper):
             return name, location if location else None
         except Exception as e:
             logger.warning(f"Error getting name/location: {e}")
-            return "Unknown", None
+            return None, None
 
     async def _check_open_to_work(self) -> bool:
         """Check if profile has open to work badge."""

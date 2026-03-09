@@ -63,8 +63,24 @@ function timeAgo(dateStr: string): string {
 
 const DEMARKO_GRADIENT = "linear-gradient(135deg, #f97316, #ef4444, #ec4899)";
 const DEMARKO_COLOR = "#f97316";
-const DEMARKO_GLOW = "rgba(249, 115, 22, 0.35)";
+const DEMARKO_GLOW = "rgba(255,107,74,0.3)";
 const DEMARKO_SOFT = "rgba(249, 115, 22, 0.1)";
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+const formatDisplayName = (name: string) => {
+  if (!name) return "Unknown";
+  // If it's a messy LinkedIn slug like m-ammar-sharif-...
+  if (name.includes("-") && /^[a-z0-9\-\.]+$/.test(name)) {
+    let cleaned = name.replace(/^(m|in)-/, "");
+    cleaned = cleaned.replace(/-[0-9a-zA-Z]{5,}$/, "").replace(/-[0-9]+$/, "");
+    return cleaned
+      .replace(/[\-\.]/g, " ")
+      .replace(/\b\w/g, (c) => c.toUpperCase())
+      .trim() || name;
+  }
+  return name;
+};
 
 // ── Main Page ──────────────────────────────────────────────────────────────────
 
@@ -732,7 +748,7 @@ export default function DemarkoPage() {
                           boxShadow: `0 4px 14px ${DEMARKO_GLOW}`,
                         }}
                       >
-                        {profile.name
+                        {formatDisplayName(profile.name)
                           .split(" ")
                           .map((n) => n[0])
                           .join("")
@@ -742,7 +758,7 @@ export default function DemarkoPage() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1">
                           <h3 className="text-[15px] font-bold text-white truncate">
-                            {profile.name}
+                            {formatDisplayName(profile.name)}
                           </h3>
                           {/* Status badge */}
                           {hasEmails ? (
@@ -1218,7 +1234,7 @@ export default function DemarkoPage() {
                     Email History
                   </h3>
                   <p className="text-xs" style={{ color: "#4b5268" }}>
-                    {viewingHistory.name} —{" "}
+                    {formatDisplayName(viewingHistory.name)} —{" "}
                     {viewingHistory.emailsSent?.length || 0} emails sent
                   </p>
                 </div>

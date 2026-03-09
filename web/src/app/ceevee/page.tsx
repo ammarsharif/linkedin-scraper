@@ -234,6 +234,22 @@ function LoadingOverlay({ step }: { step: number }) {
   );
 }
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+const formatDisplayName = (name: string) => {
+  if (!name) return "Unknown";
+  // If it's a messy LinkedIn slug like m-ammar-sharif-...
+  if (name.includes("-") && /^[a-z0-9\-\.]+$/.test(name)) {
+    let cleaned = name.replace(/^(m|in)-/, "");
+    cleaned = cleaned.replace(/-[0-9a-zA-Z]{5,}$/, "").replace(/-[0-9]+$/, "");
+    return cleaned
+      .replace(/[\-\.]/g, " ")
+      .replace(/\b\w/g, (c) => c.toUpperCase())
+      .trim() || name;
+  }
+  return name;
+};
+
 // ── Main Page ──────────────────────────────────────────────────────────────────
 
 export default function CeeveePage() {
@@ -745,14 +761,14 @@ export default function CeeveePage() {
                       boxShadow: "0 4px 16px rgba(14, 165, 233, 0.3)",
                     }}
                   >
-                    {data.profile.name
+                    {formatDisplayName(data.profile.name)
                       .split(" ")
-                      .map((n) => n[0])
+                      .map((n: string) => n[0])
                       .join("")
                       .slice(0, 2)}
                   </div>
                   <div>
-                    <h2 className="text-2xl font-bold text-white mb-1">{data.profile.name}</h2>
+                    <h2 className="text-2xl font-bold text-white mb-1">{formatDisplayName(data.profile.name)}</h2>
                     <p className="text-sm text-gray-400 max-w-xl leading-relaxed">{data.profile.headline}</p>
                     <div className="flex flex-wrap items-center gap-2 mt-3">
                       {report?.profileAnalysis?.roleLevel && (

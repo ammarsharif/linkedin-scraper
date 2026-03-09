@@ -42,6 +42,24 @@ interface ScrapeResultItem {
   posts: Post[];
 }
 
+import { extractVanityName } from "@/lib/linkedin";
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+const formatDisplayName = (name: string) => {
+  if (!name) return "Unknown";
+  // If it's a messy LinkedIn slug like m-ammar-sharif-...
+  if (name.includes("-") && /^[a-z0-9\-\.]+$/.test(name)) {
+    let cleaned = name.replace(/^(m|in)-/, "");
+    cleaned = cleaned.replace(/-[0-9a-zA-Z]{5,}$/, "").replace(/-[0-9]+$/, "");
+    return cleaned
+      .replace(/[\-\.]/g, " ")
+      .replace(/\b\w/g, (c) => c.toUpperCase())
+      .trim() || name;
+  }
+  return name;
+};
+
 export default function ScraperPage() {
   const router = useRouter();
   const [userName, setUserName] = useState("");
@@ -850,16 +868,16 @@ export default function ScraperPage() {
                       <div>
                         <div className="flex items-center gap-2">
                           <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-[#0077B5] to-[#00b4d8] text-sm font-bold text-white">
-                            {result.profile.name
-                              .split(" ")
-                              .map((n) => n[0])
-                              .join("")
-                              .slice(0, 2)}
+                             {formatDisplayName(result.profile.name)
+                               .split(" ")
+                               .map((n: string) => n[0])
+                               .join("")
+                               .slice(0, 2)}
                           </div>
                           <div>
-                            <h3 className="text-base font-semibold">
-                              {result.profile.name}
-                            </h3>
+                             <h3 className="text-base font-semibold">
+                               {formatDisplayName(result.profile.name)}
+                             </h3>
                             {result.profile.headline && (
                               <p
                                 className="text-xs max-w-xs truncate"
