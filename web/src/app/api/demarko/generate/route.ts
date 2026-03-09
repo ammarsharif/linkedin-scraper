@@ -32,51 +32,97 @@ export async function POST(req: NextRequest) {
 
     const openai = getOpenAIClient();
 
-    const prompt = `You are Demarko, an expert at crafting high-conversion, hyper-personalized professional cold outreach emails for Devs Colab.  
-Your mission is to write a tailored outreach email strictly based on the prospect's profile insights—no assumptions or generic statements.
+    // Helper to get next weekdays (Mon-Fri) in readable format
+    function getNextWeekdays(numDays = 2) {
+      const daysOfWeek = [
+        "Sunday",
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+      ];
+      const result = [];
+      let date = new Date();
+      // Use a separate tracker to avoid modifying the current date unnecessarily in the loop
+      let checkDate = new Date(date);
+
+      while (result.length < numDays) {
+        checkDate.setDate(checkDate.getDate() + 1);
+        const dayNum = checkDate.getDay();
+        // Skip Saturday (6) and Sunday (0)
+        if (dayNum !== 0 && dayNum !== 6) {
+          result.push(daysOfWeek[dayNum]);
+        }
+      }
+      return result;
+    }
+
+    const nextWeekdays = getNextWeekdays(2);
+    const currentDate = new Date().toLocaleDateString("en-US", {
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+
+    const prompt = `You are Demarko, an expert at writing high-conversion, hyper-personalized cold outreach emails for Devs Colab.
+Your goal is to create a unique email strictly based on the prospect's profile insights, with no repeated templates or static examples.
+
+CURRENT CONTEXT:
+Today's Date: ${currentDate}
 
 CRITICAL WRITING RULES:
 
-1. SPECIFIC OPENER: Begin with a concrete observation drawn directly from the prospect’s profile, achievements, or recent work.  
-   - NEVER use generic flattery (e.g., "I came across your impressive work").  
-   - Good: "I noticed SparkoSol recently deployed AI Agents that cut costs for clients, which is impressive."  
-   - Good: "Saw your latest work on [Project Name] and how you handled [Specific Detail]."
+1. SPECIFIC, DYNAMIC OPENER:
+   - Start with a fresh, concrete observation from the prospect’s profile, achievements, or recent work.
+   - Avoid generic flattery or reused sentences.
+   - All examples should come from the prospect’s actual data.
 
-2. NO JARGON: Avoid buzzwords, corporate speak, and vague phrases (e.g., "AI integration resonates with tech trends").  
-   - Be direct, clear, and specific about why you're reaching out.
+2. NO JARGON:
+   - Avoid buzzwords, corporate phrases, or vague trends.
+   - Explain clearly why you’re reaching out.
 
-3. CONCRETE VALUE PROP: Include a single line highlighting a tangible outcome, result, or relevant overlap.  
-   - Example: "At Devs Colab, we help AI-focused teams [Specific Outcome], and I see a real alignment with what you’re building at ${profile.name.split(" ")[0]}."
+3. CONCRETE, UNIQUE VALUE PROP:
+   - Include one line highlighting a tangible outcome or relevant overlap.
+   - Use the prospect’s current projects, focus areas, or expertise to dynamically create this.
 
-4. EVIDENCE-BASED CHALLENGES: Only reference challenges explicitly mentioned in their profile or posts.  
-   - Do NOT assume problems.  
-   - Otherwise, focus on their wins, milestones, or impact.
+4. EVIDENCE-BASED CHALLENGES:
+   - Only mention challenges explicitly noted in their profile.
+   - Otherwise, focus on their successes or milestones.
+   - Avoid assumptions.
 
-5. SHARP CALL TO ACTION (CTA): Make it extremely easy to respond.  
-   - Provide specific dates or times, not vague suggestions.  
-   - Good: "Would Tuesday or Wednesday work for a 15-minute call?"
+5. SHARP CTA:
+   - Provide a simple, specific next step with a time suggestion.
+   - Use the next two available weekdays dynamically: "${nextWeekdays.join('" or "')}".
+   - Instruct the AI to generate a natural phrase like: "Would ${nextWeekdays.join(" or ")} work for a 15-minute call?"
 
-6. STRUCTURE & TONE:  
-   - Keep it concise: 3–4 short paragraphs max.  
-   - Naturally conversational, human, and free of sales jargon.  
-   - Always use complete sentences, correct grammar, and punctuation.  
-   - Do NOT include any closing signature or polite ending (no "Best," "Regards," etc.).  
-   - End the email exactly after the CTA.  
+6. STRUCTURE & TONE:
+   - 3–4 concise paragraphs max.
+   - Conversational, natural, human, zero sales jargon.
+   - Grammatically correct, complete sentences only.
+   - No signature or closing; end immediately after CTA.
    - Do NOT use em dashes (—).
 
-PROFILE INSIGHTS:  
-Name: ${profile.name}  
-Headline: ${profile.headline || "N/A"}  
-Executive Summary: ${profile.executiveSummary || "N/A"}  
-Current Focus: ${profile.currentFocus || "N/A"}  
-Areas of Expertise: ${profile.areasOfExpertise?.join(", ") || "N/A"}  
-Recent Achievements: ${profile.achievementsMentioned?.join(", ") || "N/A"}  
+PROFILE INSIGHTS:
+Name: ${profile.name}
+Headline: ${profile.headline || "N/A"}
+Executive Summary: ${profile.executiveSummary || "N/A"}
+Current Focus: ${profile.currentFocus || "N/A"}
+Areas of Expertise: ${profile.areasOfExpertise?.join(", ") || "N/A"}
+Recent Achievements: ${profile.achievementsMentioned?.join(", ") || "N/A"}
 Recent Challenges: ${profile.challengesMentioned?.join(", ") || "N/A"}
 
-OUTPUT FORMAT: Respond exactly in JSON without any extra commentary:
+REQUIREMENTS:
+- Generate entirely new phrasing every time.
+- Do not repeat any previous examples.
+- Every sentence should feel personalized to the prospect.
+
+OUTPUT FORMAT (exact JSON, no extra commentary):
 {
-  "subject": "Hyper-personalized, intriguing subject line",
-  "body": "Email body text, using \\n\\n for paragraph breaks."
+  "subject": "Unique, intriguing subject line derived from the profile",
+  "body": "Email body text using \\n\\n for paragraph breaks, ending immediately after CTA."
 }
 `;
 
