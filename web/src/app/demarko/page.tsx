@@ -15,8 +15,6 @@ import {
   Send 
 } from "lucide-react";
 
-// ── Types ──────────────────────────────────────────────────────────────────────
-
 interface EmailRecord {
   id: string;
   to: string;
