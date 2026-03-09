@@ -649,7 +649,7 @@ export default function DemarkoPage() {
                 className="text-[10px] font-bold uppercase tracking-wider mb-1"
                 style={{ color: "#00e676" }}
               >
-                Emails Sent
+                Emailed Outreach
               </p>
               <p className="text-2xl font-bold" style={{ color: "#00e676" }}>
                 {totalEmailed}
