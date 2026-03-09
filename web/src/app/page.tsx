@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { Lock, Linkedin } from "lucide-react";
 
 export default function AuthPage() {
   const router = useRouter();
@@ -72,10 +73,8 @@ export default function AuthPage() {
 
         {/* Logo */}
         <div className="mb-8 text-center animate-fade-in">
-          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-[#0077B5] to-[#00b4d8] shadow-lg shadow-[#0077B5]/30">
-            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="white">
-              <path d="M19 0h-14c-2.761 0-5 2.239-5 5v14c0 2.761 2.239 5 5 5h14c2.762 0 5-2.239 5-5v-14c0-2.761-2.238-5-5-5zm-11 19h-3v-11h3v11zm-1.5-12.268c-.966 0-1.75-.79-1.75-1.764s.784-1.764 1.75-1.764 1.75.79 1.75 1.764-.783 1.764-1.75 1.764zm13.5 12.268h-3v-5.604c0-3.368-4-3.113-4 0v5.604h-3v-11h3v1.765c1.396-2.586 7-2.777 7 2.476v6.759z"/>
-            </svg>
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-linear-to-br from-[#0077B5] to-[#00b4d8] shadow-lg shadow-[#0077B5]/30">
+            <Linkedin size={32} fill="white" stroke="white" />
           </div>
           <h1 className="text-3xl font-bold tracking-tight">LinkedIn Scraper</h1>
           <p className="mt-2 text-base" style={{ color: "var(--text-secondary)" }}>
@@ -131,10 +130,7 @@ export default function AuthPage() {
                 <><span className="spinner" /> Validating...</>
               ) : (
                 <>
-                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-                    <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-                  </svg>
+                  <Lock size={18} />
                   Authenticate &amp; Continue
                 </>
               )}

@@ -2,6 +2,21 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { 
+  Briefcase, 
+  Users, 
+  Zap, 
+  Lightbulb, 
+  BookOpen, 
+  ArrowRight, 
+  Search, 
+  Mail, 
+  MessageSquare, 
+  Linkedin, 
+  Copy, 
+  Check, 
+  RotateCcw 
+} from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -79,10 +94,7 @@ const TONES: {
     tagline: "Credible & polished",
     color: "#0ea5e9",
     icon: (
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <rect x="2" y="7" width="20" height="14" rx="2" />
-        <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
-      </svg>
+      <Briefcase size={15} />
     ),
   },
   {
@@ -91,12 +103,7 @@ const TONES: {
     tagline: "Warm & human",
     color: "#10b981",
     icon: (
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-        <circle cx="9" cy="7" r="4" />
-        <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-      </svg>
+      <Users size={15} />
     ),
   },
   {
@@ -105,9 +112,7 @@ const TONES: {
     tagline: "High-impact & fearless",
     color: "#f59e0b",
     icon: (
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-      </svg>
+      <Zap size={15} />
     ),
   },
   {
@@ -116,11 +121,7 @@ const TONES: {
     tagline: "Problem-solver focused",
     color: "#a78bfa",
     icon: (
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <circle cx="12" cy="12" r="10" />
-        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
-        <line x1="12" y1="17" x2="12.01" y2="17" />
-      </svg>
+      <Lightbulb size={15} />
     ),
   },
   {
@@ -129,10 +130,7 @@ const TONES: {
     tagline: "Narrative-driven hook",
     color: "#ec4899",
     icon: (
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
-        <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
-      </svg>
+      <BookOpen size={15} />
     ),
   },
   {
@@ -141,10 +139,7 @@ const TONES: {
     tagline: "No fluff, fast close",
     color: "#fb923c",
     icon: (
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <line x1="5" y1="12" x2="19" y2="12" />
-        <polyline points="12 5 19 12 12 19" />
-      </svg>
+      <ArrowRight size={15} />
     ),
   },
 ];
@@ -179,17 +174,12 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
     >
       {copied ? (
         <>
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-            <polyline points="20 6 9 17 4 12" />
-          </svg>
+          <Check size={11} strokeWidth={2.5} />
           Copied
         </>
       ) : (
         <>
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-          </svg>
+          <Copy size={11} />
           {label || "Copy"}
         </>
       )}
@@ -228,9 +218,7 @@ function LoadingOverlay({ step, toneName }: { step: number; toneName: string }) 
             animation: "inti-pulse 2s ease-in-out infinite",
           }}
         >
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-          </svg>
+          <MessageSquare size={28} />
         </div>
         <h3 className="text-lg font-bold text-white mb-1">Crafting Your {toneName} Pitch</h3>
         <p className="text-sm text-gray-400 mb-6">Personalizing for maximum impact...</p>
@@ -246,9 +234,7 @@ function LoadingOverlay({ step, toneName }: { step: number; toneName: string }) 
             >
               <div className="w-5 h-5 flex items-center justify-center shrink-0">
                 {i < step ? (
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#00e676" strokeWidth="2.5">
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
+                  <Check size={13} stroke="#00e676" strokeWidth={2.5} />
                 ) : i === step ? (
                   <div
                     style={{
@@ -478,9 +464,7 @@ export default function IntiPage() {
                 e.currentTarget.style.borderColor = "rgba(0,180,216,0.3)";
               }}
             >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <path d="M19 0h-14c-2.761 0-5 2.239-5 5v14c0 2.761 2.239 5 5 5h14c2.762 0 5-2.239 5-5v-14c0-2.761-2.238-5-5-5zm-11 19h-3v-11h3v11zm-1.5-12.268c-.966 0-1.75-.79-1.75-1.764s.784-1.764 1.75-1.764 1.75.79 1.75 1.764-.783 1.764-1.75 1.764zm13.5 12.268h-3v-5.604c0-3.368-4-3.113-4 0v5.604h-3v-11h3v1.765c1.396-2.586 7-2.777 7 2.476v6.759z" />
-              </svg>
+                <Linkedin size={13} strokeWidth={2.5} />
               <span>Scraper</span>
             </button>
 
@@ -496,9 +480,7 @@ export default function IntiPage() {
                   boxShadow: `0 0 12px ${INTI_GLOW}`,
                 }}
               >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                </svg>
+                <MessageSquare size={16} stroke="white" />
               </div>
               <div>
                 <p className="text-sm font-bold" style={{ color: "#e5e7eb", lineHeight: 1.2 }}>Inti</p>
@@ -526,10 +508,7 @@ export default function IntiPage() {
                   e.currentTarget.style.borderColor = "rgba(14,165,233,0.3)";
                 }}
               >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <circle cx="11" cy="11" r="8" />
-                  <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                </svg>
+                  <Search size={13} strokeWidth={2.5} />
                 <span>Ceevee</span>
               </button>
 
@@ -550,10 +529,7 @@ export default function IntiPage() {
                   e.currentTarget.style.borderColor = "rgba(249,115,22,0.3)";
                 }}
               >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
-                  <polyline points="22,6 12,13 2,6" />
-                </svg>
+                  <Mail size={13} strokeWidth={2.5} />
                 <span>Demarko</span>
               </button>
 
@@ -581,9 +557,7 @@ export default function IntiPage() {
                   e.currentTarget.style.borderColor = "rgba(201,110,245,0.3)";
                 }}
               >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-                </svg>
+                  <Zap size={13} strokeWidth={2.5} />
                 <span>Sienna</span>
               </button>
             </nav>
@@ -595,6 +569,7 @@ export default function IntiPage() {
                 onClick={handleReset}
                 className="text-sm px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 font-medium transition-all border border-white/10 cursor-pointer"
               >
+                <RotateCcw size={14} className="mr-2 inline" />
                 Clear Pitches
               </button>
             )}
@@ -616,9 +591,7 @@ export default function IntiPage() {
                 border: `1px solid rgba(99,102,241,0.2)`,
               }}
             >
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke={INTI_COLOR} strokeWidth="1.5">
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-              </svg>
+                <MessageSquare size={32} stroke={INTI_COLOR} strokeWidth={1.5} />
             </div>
             <h2 className="text-2xl font-bold text-white mb-3">No Prospect Data Found</h2>
             <p className="text-gray-400 text-sm mb-8 leading-relaxed">
@@ -630,10 +603,7 @@ export default function IntiPage() {
               className="inline-flex items-center gap-2 px-6 py-3 rounded-xl font-bold text-white cursor-pointer"
               style={{ background: "linear-gradient(135deg, #0ea5e9, #2563eb)" }}
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="11" cy="11" r="8" />
-                <line x1="21" y1="21" x2="16.65" y2="16.65" />
-              </svg>
+                <Search size={16} />
               Go to Ceevee
             </button>
           </div>

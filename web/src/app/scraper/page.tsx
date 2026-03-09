@@ -2,6 +2,19 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { 
+  Linkedin, 
+  Search, 
+  Mail, 
+  MessageSquare, 
+  Zap, 
+  Trash2, 
+  AlertTriangle, 
+  PlayCircle, 
+  Activity, 
+  Check, 
+  Download 
+} from "lucide-react";
 
 interface Profile {
   name: string;
@@ -315,16 +328,8 @@ export default function ScraperPage() {
       <header className="sticky top-0 z-50 border-b border-white/5 bg-[#0a0b14]/80 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-[#0077B5] to-[#00b4d8]">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="white"
-              >
-                <path d="M19 0h-14c-2.761 0-5 2.239-5 5v14c0 2.761 2.239 5 5 5h14c2.762 0 5-2.239 5-5v-14c0-2.761-2.238-5-5-5zm-11 19h-3v-11h3v11zm-1.5-12.268c-.966 0-1.75-.79-1.75-1.764s.784-1.764 1.75-1.764 1.75.79 1.75 1.764-.783 1.764-1.75 1.764zm13.5 12.268h-3v-5.604c0-3.368-4-3.113-4 0v5.604h-3v-11h3v1.765c1.396-2.586 7-2.777 7 2.476v6.759z" />
-              </svg>
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-linear-to-br from-[#0077B5] to-[#00b4d8]">
+              <Linkedin size={18} fill="white" stroke="white" />
             </div>
             <div>
               <h1 className="text-base font-semibold">LinkedIn Scraper</h1>
@@ -365,10 +370,7 @@ export default function ScraperPage() {
                   e.currentTarget.style.borderColor = "rgba(14,165,233,0.3)";
                 }}
               >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <circle cx="11" cy="11" r="8" />
-                  <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                </svg>
+                <Search size={13} strokeWidth={2.5} />
                 <span>Ceevee</span>
               </button>
               <button
@@ -388,10 +390,7 @@ export default function ScraperPage() {
                   e.currentTarget.style.borderColor = "rgba(249,115,22,0.3)";
                 }}
               >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
-                  <polyline points="22,6 12,13 2,6" />
-                </svg>
+                <Mail size={13} strokeWidth={2.5} />
                 <span>Demarko</span>
               </button>
 
@@ -412,9 +411,7 @@ export default function ScraperPage() {
                   e.currentTarget.style.borderColor = "rgba(99,102,241,0.3)";
                 }}
               >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                </svg>
+                <MessageSquare size={13} strokeWidth={2.5} />
                 <span>Inti</span>
               </button>
 
@@ -443,9 +440,7 @@ export default function ScraperPage() {
                   e.currentTarget.style.borderColor = "rgba(201,110,245,0.3)";
                 }}
               >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-                </svg>
+                <Zap size={13} strokeWidth={2.5} />
                 <span>Sienna</span>
               </button>
             </nav>
@@ -477,22 +472,12 @@ export default function ScraperPage() {
               >
                 {confirmClear ? (
                   <>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                      <line x1="12" y1="9" x2="12" y2="13" />
-                      <line x1="12" y1="17" x2="12.01" y2="17" />
-                    </svg>
+                    <AlertTriangle size={14} strokeWidth={2.5} />
                     Confirm clear?
                   </>
                 ) : (
                   <>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <polyline points="3 6 5 6 21 6" />
-                      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                      <path d="M10 11v6" />
-                      <path d="M14 11v6" />
-                      <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
-                    </svg>
+                    <Trash2 size={14} />
                     Clear data
                   </>
                 )}
@@ -593,20 +578,7 @@ export default function ScraperPage() {
                   </>
                 ) : (
                   <>
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      width="18"
-                      height="18"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <circle cx="12" cy="12" r="10" />
-                      <polygon points="10 8 16 12 10 16 10 8" />
-                    </svg>
+                    <PlayCircle size={18} />
                     Start Scraping
                   </>
                 )}
@@ -618,9 +590,7 @@ export default function ScraperPage() {
               <div className="glass-card p-5 animate-fade-in border border-[#00b4d8]/20 shadow-[0_0_30px_rgba(0,180,216,0.1)]">
                 <div className="flex items-start gap-4 mb-5">
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#00b4d8]/10 text-[#00b4d8] shadow-inner mb-2 lg:mb-0">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M2 12h4l3-9 5 18 3-9h5" />
-                    </svg>
+                    <Activity size={20} strokeWidth={2.5} />
                   </div>
                   <div>
                     <h3 className="text-sm font-bold bg-linear-to-r from-[#0077B5] to-[#00b4d8] bg-clip-text text-transparent">
@@ -641,9 +611,7 @@ export default function ScraperPage() {
                     <div key={idx} className={`flex items-center gap-3 text-sm transition-all duration-500 ${idx > stageIndex ? 'opacity-30' : 'opacity-100'} ${idx === stageIndex ? 'scale-105 transform translate-x-1.5 origin-left' : ''}`}>
                       {idx < stageIndex ? (
                         <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-green-500/20 text-green-500 shadow-sm shadow-green-500/20">
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                            <polyline points="20 6 9 17 4 12"></polyline>
-                          </svg>
+                          <Check size={12} strokeWidth={3} />
                         </div>
                       ) : idx === stageIndex ? (
                         <div className="spinner h-5 w-5 shrink-0" style={{ borderLeftColor: '#00b4d8', borderWidth: '2px' }} />
@@ -690,21 +658,7 @@ export default function ScraperPage() {
                   onClick={handleDownloadCSV}
                   className="btn-success w-full"
                 >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    width="18"
-                    height="18"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                    <polyline points="7 10 12 15 17 10" />
-                    <line x1="12" y1="15" x2="12" y2="3" />
-                  </svg>
+                  <Download size={18} />
                   Download CSV
                 </button>
 
@@ -720,22 +674,12 @@ export default function ScraperPage() {
                 >
                   {confirmClear ? (
                     <>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                        <line x1="12" y1="9" x2="12" y2="13" />
-                        <line x1="12" y1="17" x2="12.01" y2="17" />
-                      </svg>
+                      <AlertTriangle size={14} strokeWidth={2.5} />
                       Click again to confirm
                     </>
                   ) : (
                     <>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <polyline points="3 6 5 6 21 6" />
-                        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                        <path d="M10 11v6" />
-                        <path d="M14 11v6" />
-                        <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
-                      </svg>
+                      <Trash2 size={14} />
                       Clear all data &amp; start fresh
                     </>
                   )}
@@ -749,9 +693,7 @@ export default function ScraperPage() {
                       width: 24, height: 24, borderRadius: 6,
                       background: "linear-gradient(135deg, #7c3aed, #c96ef5, #f06aff)",
                     }}>
-                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-                      </svg>
+                      <Zap size={12} strokeWidth={2.5} />
                     </div>
                     <span className="text-sm font-bold" style={{ background: "linear-gradient(135deg, #7c3aed, #c96ef5, #f06aff)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Next Step: Sienna</span>
                   </div>
@@ -772,9 +714,7 @@ export default function ScraperPage() {
                     className="group relative flex w-full items-center justify-center gap-2 rounded-xl bg-linear-to-r from-[#7c3aed] via-[#c96ef5] to-[#f06aff] px-4 py-3.5 text-sm font-bold text-white shadow-lg shadow-purple-500/20 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-purple-500/40 active:translate-y-0 cursor-pointer overflow-hidden"
                   >
                     <div className="absolute inset-0 bg-white/20 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none" className="z-10 relative">
-                      <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-                    </svg>
+                    <Zap size={16} fill="currentColor" />
                     <span className="z-10 relative">Generate Hooks with Sienna</span>
                   </button>
                 </div>
