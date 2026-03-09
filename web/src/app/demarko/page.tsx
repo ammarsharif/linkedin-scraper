@@ -679,7 +679,7 @@ export default function DemarkoPage() {
 
           {/* Filters & Search */}
           <div className="flex flex-wrap items-center gap-3">
-            <div className="flex gap-1 p-1 rounded-xl bg-white/[0.03] border border-white/5">
+            <div className="flex gap-1 p-1 rounded-xl border border-white/5">
               {(
                 [
                   { id: "all", label: "All" },
@@ -1122,6 +1122,7 @@ export default function DemarkoPage() {
                       background: "rgba(249,115,22,0.1)",
                       color: DEMARKO_COLOR,
                       border: "1px solid rgba(249,115,22,0.2)",
+                      cursor: generatingEmail ? "not-allowed" : "pointer",
                     }}
                   >
                     <Zap size={12} className={generatingEmail ? "animate-pulse" : ""} />

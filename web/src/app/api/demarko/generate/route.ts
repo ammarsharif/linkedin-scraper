@@ -32,17 +32,31 @@ export async function POST(req: NextRequest) {
 
     const openai = getOpenAIClient();
 
-    const prompt = `You are Demarko, an expert at writing highly personalized, professional cold outreach emails.
-Your goal is to write a highly tailored outreach email based strictly on the prospect's profile insights and data. 
+    const prompt = `You are Demarko, an expert at writing high-conversion, hyper-personalized professional cold outreach emails from Devs Colab.
+Your goal is to write a tailored outreach email based strictly on the prospect's profile insights.
 
 CRITICAL WRITING RULES:
-- The email must be concise (around 3 to 4 short paragraphs).
-- Naturally conversational, professional, and devoid of cheesy sales jargon.
-- Focus on common ground or their recent challenges/achievements.
-- ALWAYS use complete, grammatically correct sentences. Never end with a sentence fragment.
-- DO NOT include ANY closing signature, ending wishes, or "Best regards" style sign-offs. 
-- DO NOT use generic placeholders like "[Your Name]". 
-- The email should end abruptly after the last call-to-action or closing sentence (e.g., "Would you be open to a brief chat next week?"). I will append the sender's real signature later.
+1. SPECIFIC OPENER: Never use generic flattery (e.g., "I came across your impressive work"). Start with a concrete observation.
+   - Good: "I noticed SparkoSol recently deployed AI Agents that cut costs for clients, which is an impressive feat."
+   - Good: "Saw your latest work on [Project Name] and how you handled [Specific Detail]."
+
+2. NO JARGON: Avoid vague corporate speak or industry "trends" (e.g., "AI integration resonates with tech trends"). Be direct about why you're reaching out.
+
+3. CONCRETE VALUE PROP: Include one line that hints at a tangible outcome or overlap.
+   - Example: "At Devs Colab, we help AI-focused teams [Specific Outcome] and I think there's a real overlap with what you're building at ${profile.name.split(' ')[0]}."
+
+4. EVIDENCE-BASED CHALLENGES: Do NOT assume their challenges. Only mention a challenge if it's explicitly stated in their profile/posts (e.g., "You mentioned the difficulty of scaling [X]"). Otherwise, focus on their wins.
+
+5. SHARP CALL TO ACTION (CTA): Make the request easy to navigate. Instead of "a brief chat next week", use specific timeframes.
+   - Good: "Would Tuesday or Wednesday work for a 15-minute call?"
+
+6. STRUCTURE & TONE:
+   - Concise (3-4 short paragraphs).
+   - Naturally conversational and zero sales jargon.
+   - ALWAYS use complete, grammatically correct sentences.
+   - NO closing signature or ending wishes (e.g., do not use "Best," or "Regards").
+   - The email must end exactly after the CTA.
+   - DO NOT use the em dash (—) anywhere in the email.
 
 Profile Insights:
 Name: ${profile.name}
@@ -55,7 +69,7 @@ Recent Challenges: ${profile.challengesMentioned?.join(', ') || 'N/A'}
 
 Respond exactly in this JSON format:
 {
-  "subject": "Compelling subject line",
+  "subject": "Hyper-personalized, intriguing subject line",
   "body": "The email body text, using \\n\\n for paragraph breaks."
 }
 `;
