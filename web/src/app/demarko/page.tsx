@@ -497,10 +497,10 @@ export default function DemarkoPage() {
             <button
               onClick={loadProfiles}
               disabled={loading}
-              className="text-sm px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 font-medium transition-all border border-white/10 cursor-pointer disabled:opacity-50"
+              className="flex items-center gap-2 text-sm px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 font-medium transition-all border border-white/10 cursor-pointer disabled:opacity-50"
             >
-              {loading ? <RefreshCw size={14} className="animate-spin mr-2" /> : <RefreshCw size={14} className="mr-2" />}
-              {loading ? "Refreshing..." : "Refresh"}
+              <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+              <span>{loading ? "Refreshing..." : "Refresh"}</span>
             </button>
           </div>
         </div>
