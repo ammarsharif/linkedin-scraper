@@ -165,7 +165,13 @@ export default function ScraperPage() {
 
         if (!res.ok) {
           if (res.status === 401) {
-            showToast("Session expired. Please re-authenticate.", "error");
+            showToast("LinkedIn session expired. Please re-authenticate.", "error");
+            localStorage.removeItem("scraper_state");
+            localStorage.removeItem("sienna_state");
+            localStorage.removeItem("sienna_payload");
+            localStorage.removeItem("ceevee_state");
+            localStorage.removeItem("inti_state");
+            await fetch("/api/auth", { method: "DELETE" });
             router.push("/");
             return;
           }
@@ -344,26 +350,103 @@ export default function ScraperPage() {
                   }
                   router.push("/ceevee");
                 }}
-                className="group relative flex items-center gap-2 rounded-xl px-3.5 py-1.5 text-xs font-bold text-white transition-all duration-300 cursor-pointer hover:-translate-y-px overflow-hidden"
+                className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border"
                 style={{
-                  background: "linear-gradient(135deg, #0ea5e9, #2563eb)",
-                  boxShadow: "0 0 14px rgba(14,165,233,0.35)",
+                  background: "rgba(0,0,0,0.4)",
+                  borderColor: "rgba(14,165,233,0.3)",
+                  color: "#0ea5e9",
                 }}
-                onMouseEnter={(e) => { e.currentTarget.style.boxShadow = "0 0 22px rgba(14,165,233,0.55)"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "0 0 14px rgba(14,165,233,0.35)"; }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "rgba(14,165,233,0.08)";
+                  e.currentTarget.style.borderColor = "rgba(14,165,233,0.5)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "rgba(0,0,0,0.4)";
+                  e.currentTarget.style.borderColor = "rgba(14,165,233,0.3)";
+                }}
               >
-                <div className="absolute inset-0 bg-white/10 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="relative z-10">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                   <circle cx="11" cy="11" r="8" />
                   <line x1="21" y1="21" x2="16.65" y2="16.65" />
                 </svg>
-                <span className="relative z-10">Ceevee</span>
-                <span
-                  className="relative z-10 flex items-center justify-center rounded-md px-1.5 py-0.5 text-[9px] font-black tracking-wide"
-                  style={{ background: "rgba(255,255,255,0.22)", letterSpacing: "0.06em" }}
-                >
-                  NEW
-                </span>
+                <span>Ceevee</span>
+              </button>
+              <button
+                onClick={() => router.push("/demarko")}
+                className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border"
+                style={{
+                  background: "rgba(0,0,0,0.4)",
+                  borderColor: "rgba(249,115,22,0.3)",
+                  color: "#f97316",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "rgba(249,115,22,0.08)";
+                  e.currentTarget.style.borderColor = "rgba(249,115,22,0.5)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "rgba(0,0,0,0.4)";
+                  e.currentTarget.style.borderColor = "rgba(249,115,22,0.3)";
+                }}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+                  <polyline points="22,6 12,13 2,6" />
+                </svg>
+                <span>Demarko</span>
+              </button>
+
+              <button
+                onClick={() => router.push("/inti")}
+                className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border"
+                style={{
+                  background: "rgba(0,0,0,0.4)",
+                  borderColor: "rgba(99,102,241,0.3)",
+                  color: "#818cf8",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "rgba(99,102,241,0.08)";
+                  e.currentTarget.style.borderColor = "rgba(99,102,241,0.5)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "rgba(0,0,0,0.4)";
+                  e.currentTarget.style.borderColor = "rgba(99,102,241,0.3)";
+                }}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                </svg>
+                <span>Inti</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  if (results.length > 0) {
+                    localStorage.setItem("sienna_payload", JSON.stringify({
+                      profiles: results.map(r => r.profile),
+                      posts: results.flatMap(r => r.posts),
+                    }));
+                  }
+                  router.push("/sienna");
+                }}
+                className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border"
+                style={{
+                  background: "rgba(0,0,0,0.4)",
+                  borderColor: "rgba(201,110,245,0.3)",
+                  color: "#c96ef5",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "rgba(201,110,245,0.08)";
+                  e.currentTarget.style.borderColor = "rgba(201,110,245,0.5)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "rgba(0,0,0,0.4)";
+                  e.currentTarget.style.borderColor = "rgba(201,110,245,0.3)";
+                }}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                </svg>
+                <span>Sienna</span>
               </button>
             </nav>
           </div>
@@ -734,6 +817,38 @@ export default function ScraperPage() {
                       <line x1="21" y1="21" x2="16.65" y2="16.65" />
                     </svg>
                     <span className="z-10 relative">Research Lead with Ceevee</span>
+                  </button>
+                </div>
+
+                {/* Demarko CTA */}
+                <div className="demarko-cta-card mt-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div style={{
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      width: 24, height: 24, borderRadius: 6,
+                      background: "linear-gradient(135deg, #f97316, #ef4444, #ec4899)",
+                    }}>
+                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+                        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+                        <polyline points="22,6 12,13 2,6" />
+                      </svg>
+                    </div>
+                    <span className="text-sm font-bold" style={{ background: "linear-gradient(135deg, #f97316, #ef4444, #ec4899)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Next Step: Demarko</span>
+                  </div>
+                  <p className="text-xs mb-3" style={{ color: "var(--text-muted)" }}>
+                    Send personalized follow-up emails to your researched prospects.
+                  </p>
+                  <button
+                    onClick={() => router.push("/demarko")}
+                    className="group relative flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3.5 text-sm font-bold text-white shadow-lg shadow-orange-500/20 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-orange-500/40 active:translate-y-0 cursor-pointer overflow-hidden"
+                    style={{ background: "linear-gradient(135deg, #f97316, #ef4444, #ec4899)" }}
+                  >
+                    <div className="absolute inset-0 bg-white/20 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="z-10 relative">
+                      <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+                      <polyline points="22,6 12,13 2,6" />
+                    </svg>
+                    <span className="z-10 relative">Outreach with Demarko</span>
                   </button>
                 </div>
 

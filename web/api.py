@@ -130,6 +130,8 @@ def _do_scrape(cookie_string: str, profile_url: str, limit: int) -> dict:
                     print(f"[api] Profile scraped: {person.name!r}", file=sys.stderr)
                 except Exception as e:
                     print(f"[api] Profile scrape error: {e}", file=sys.stderr)
+                    if "Not logged in" in str(e) or "authenticate" in str(e).lower():
+                        raise e
                     import traceback
                     traceback.print_exc(file=sys.stderr)
 
@@ -165,6 +167,8 @@ def _do_scrape(cookie_string: str, profile_url: str, limit: int) -> dict:
                     ]
                 except Exception as e:
                     print(f"[api] Posts scrape error: {e}", file=sys.stderr)
+                    if "Not logged in" in str(e) or "authenticate" in str(e).lower():
+                        raise e
                     import traceback
                     traceback.print_exc(file=sys.stderr)
 

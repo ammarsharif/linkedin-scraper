@@ -11,6 +11,7 @@ Async LinkedIn scraper built with Playwright for extracting profile, company, an
 **Version 3.0.0 introduces breaking changes and is NOT backwards compatible with previous versions.**
 
 ### What Changed:
+
 - **Playwright instead of Selenium** - Complete rewrite using Playwright for better performance and reliability
 - **Async/await throughout** - All methods are now async and require `await`
 - **New package structure** - Imports have changed (e.g., `from linkedin_scraper import PersonScraper`)
@@ -20,6 +21,7 @@ Async LinkedIn scraper built with Playwright for extracting profile, company, an
 ### Migration Guide:
 
 **Before (v2.x with Selenium):**
+
 ```python
 from linkedin_scraper import Person
 
@@ -28,6 +30,7 @@ print(person.name)
 ```
 
 **After (v3.0+ with Playwright):**
+
 ```python
 import asyncio
 from linkedin_scraper import BrowserManager, PersonScraper
@@ -43,23 +46,29 @@ asyncio.run(main())
 ```
 
 **If you need the old Selenium-based version:**
+
 ```bash
 pip install linkedin-scraper==2.11.2
 ```
+
 ## Quick Testing
 
 To test that this works, you can clone this repo, install dependencies with
+
 ```
 git clone https://github.com/joeyism/linkedin_scraper.git
 cd linkedin_scraper
 pip3 install -e .
 ```
+
 then run
+
 ```
 python3 samples/create_session.py
 python3 samples/scrape_company.py
 python3 samples/scrape_person.py
 ```
+
 and you will see the scraping in action.
 
 ---
@@ -71,17 +80,14 @@ and you will see the scraping in action.
   - Work experience with details
   - Education history
   - Skills and accomplishments
-  
 - **Company Pages** - Extract company information
   - Company overview and details
   - Industry and size
   - Headquarters location
-  
 - **Company Posts** - Scrape posts from company pages
   - Post content and text
   - Reactions, comments, reposts counts
   - Posted date and images
-  
 - **Job Listings** - Scrape job postings
   - Job details and requirements
   - Company information
@@ -117,13 +123,13 @@ async def main():
     async with BrowserManager(headless=False) as browser:
         # Load authenticated session
         await browser.load_session("session.json")
-        
+
         # Create scraper
         scraper = PersonScraper(browser.page)
-        
+
         # Scrape a profile
         person = await scraper.scrape("https://linkedin.com/in/williamhgates/")
-        
+
         # Access data
         print(f"Name: {person.name}")
         print(f"Headline: {person.headline}")
@@ -142,10 +148,10 @@ from linkedin_scraper import CompanyScraper
 async def scrape_company():
     async with BrowserManager(headless=False) as browser:
         await browser.load_session("session.json")
-        
+
         scraper = CompanyScraper(browser.page)
         company = await scraper.scrape("https://linkedin.com/company/microsoft/")
-        
+
         print(f"Company: {company.name}")
         print(f"Industry: {company.industry}")
         print(f"Size: {company.company_size}")
@@ -162,14 +168,14 @@ from linkedin_scraper import JobSearchScraper
 async def search_jobs():
     async with BrowserManager(headless=False) as browser:
         await browser.load_session("session.json")
-        
+
         scraper = JobSearchScraper(browser.page)
         jobs = await scraper.search(
             keywords="Python Developer",
             location="San Francisco",
             limit=10
         )
-        
+
         for job in jobs:
             print(f"{job.title} at {job.company}")
             print(f"Location: {job.location}")
@@ -187,13 +193,13 @@ from linkedin_scraper import BrowserManager, CompanyPostsScraper
 async def scrape_company_posts():
     async with BrowserManager(headless=False) as browser:
         await browser.load_session("session.json")
-        
+
         scraper = CompanyPostsScraper(browser.page)
         posts = await scraper.scrape(
             "https://linkedin.com/company/microsoft/",
             limit=10
         )
-        
+
         for post in posts:
             print(f"Posted: {post.posted_date}")
             print(f"Text: {post.text[:200]}...")
@@ -218,11 +224,11 @@ async def create_session():
     async with BrowserManager(headless=False) as browser:
         # Navigate to LinkedIn
         await browser.page.goto("https://www.linkedin.com/login")
-        
+
         # Wait for manual login (opens browser)
         print("Please log in to LinkedIn...")
         await wait_for_manual_login(browser.page, timeout=300)
-        
+
         # Save session
         await browser.save_session("session.json")
         print("✓ Session saved!")
@@ -244,7 +250,7 @@ async def login():
             username=os.getenv("LINKEDIN_EMAIL"),
             password=os.getenv("LINKEDIN_PASSWORD")
         )
-        
+
         # Save session for reuse
         await browser.save_session("session.json")
 
@@ -260,10 +266,10 @@ from linkedin_scraper import ConsoleCallback, PersonScraper
 
 async def scrape_with_progress():
     callback = ConsoleCallback()  # Prints progress to console
-    
+
     async with BrowserManager(headless=False) as browser:
         await browser.load_session("session.json")
-        
+
         scraper = PersonScraper(browser.page, callback=callback)
         person = await scraper.scrape("https://linkedin.com/in/williamhgates/")
 
@@ -278,13 +284,13 @@ from linkedin_scraper import ProgressCallback
 class MyCallback(ProgressCallback):
     async def on_start(self, scraper_type: str, url: str):
         print(f"Starting {scraper_type} scraping: {url}")
-    
+
     async def on_progress(self, message: str, percent: int):
         print(f"[{percent}%] {message}")
-    
+
     async def on_complete(self, scraper_type: str, url: str):
         print(f"Completed {scraper_type}: {url}")
-    
+
     async def on_error(self, error: Exception):
         print(f"Error: {error}")
 ```
@@ -384,6 +390,7 @@ except ProfileNotFoundError:
 ## Best Practices
 
 1. **Rate Limiting** - Add delays between requests
+
    ```python
    import asyncio
    await asyncio.sleep(2)  # 2 second delay
@@ -404,6 +411,20 @@ except ProfileNotFoundError:
 - Pydantic 2.0+
 - aiofiles
 - python-dotenv (optional, for credentials)
+
+## Troubleshooting
+
+### MongoDB Connection Issues
+
+If you encounter a `querySrv ECONNREFUSED` error when connecting to MongoDB Atlas, it is almost always a DNS resolution issue.
+
+**Recommended Fix:**
+Try changing your computer's DNS settings to use reliable public DNS servers:
+
+- **Primary (Google):** `8.8.8.8`
+- **Secondary (Cloudflare):** `1.1.1.1`
+
+This resolves issues where local or ISP DNS servers fail to resolve the special `_mongodb._tcp` SRV records used by Atlas.
 
 ## License
 

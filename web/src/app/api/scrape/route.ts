@@ -92,6 +92,16 @@ export async function POST(req: NextRequest) {
 
     const result = await apiResponse.json();
 
+    if (result.error) {
+      if (result.error.includes("Not logged in") || result.error.includes("authenticate")) {
+        return NextResponse.json(
+          { error: "Not logged in to LinkedIn. Please re-authenticate." },
+          { status: 401 }
+        );
+      }
+      return NextResponse.json({ error: result.error }, { status: 500 });
+    }
+
     console.log(`[scrape] Done — profile: "${result.profile.name}", posts: ${result.posts.length}`);
 
     return NextResponse.json({
