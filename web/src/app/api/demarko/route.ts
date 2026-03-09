@@ -47,55 +47,46 @@ function generateEmailHtml(params: {
       <td style="padding: 40px 20px;">
         <table role="presentation" cellpadding="0" cellspacing="0" width="600" style="margin: 0 auto; max-width: 600px;">
           
-          <!-- Header -->
+          <!-- Unified Card -->
           <tr>
-            <td style="padding: 0 0 24px;">
-              <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); border-radius: 16px 16px 0 0; overflow: hidden;">
+            <td>
+              <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 24px rgba(0,0,0,0.06); border: 1px solid #e5e7eb;">
+                
+                <!-- Top Accent Bar -->
                 <tr>
-                  <td style="padding: 28px 32px;">
+                  <td style="height: 4px; background: linear-gradient(90deg, #f97316, #ef4444, #ec4899);"></td>
+                </tr>
+
+                <!-- Branding Area -->
+                <tr>
+                  <td style="padding: 32px 32px 0;">
                     <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
                       <tr>
                         <td>
-                          <div style="display: inline-block; background: linear-gradient(135deg, #f97316, #ef4444, #ec4899); padding: 8px 12px; border-radius: 10px; margin-bottom: 12px;">
-                            <span style="color: white; font-size: 14px; font-weight: 700; letter-spacing: 0.5px;">DEMARKO</span>
+                          <div style="font-size: 13px; font-weight: 700; letter-spacing: 1.5px; color: #1e293b; text-transform: uppercase; line-height: 1;">
+                            DEMARKO <span style="font-weight: 400; color: #94a3b8; font-size: 11px; margin-left: 8px; letter-spacing: 0.5px;">| INTELLIGENCE</span>
                           </div>
-                          <h1 style="margin: 8px 0 0; color: #ffffff; font-size: 22px; font-weight: 700; line-height: 1.3;">
-                            A personalized message for you
-                          </h1>
                         </td>
                       </tr>
                     </table>
                   </td>
                 </tr>
-                <!-- Gradient accent bar -->
-                <tr>
-                  <td style="height: 4px; background: linear-gradient(90deg, #f97316, #ef4444, #ec4899, #8b5cf6);"></td>
-                </tr>
-              </table>
-            </td>
-          </tr>
 
-          <!-- Body -->
-          <tr>
-            <td>
-              <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background: #ffffff; border-radius: 0 0 16px 16px; box-shadow: 0 4px 24px rgba(0,0,0,0.08);">
+                <!-- Body Area -->
                 <tr>
-                  <td style="padding: 36px 32px;">
-                    <!-- Greeting -->
-                    <p style="margin: 0 0 20px; font-size: 16px; line-height: 1.7; color: #374151;">
-                      Hi <strong style="color: #0f172a;">${recipientName}</strong>,
-                    </p>
-                    
-                    <!-- Email Body -->
-                    ${bodyHtml}
+                  <td style="padding: 32px 32px 40px;">
+                    <!-- Email Content -->
+                    <div style="font-size: 16px; line-height: 1.7; color: #334155;">
+                      ${bodyHtml}
+                    </div>
                     
                     <!-- Signature -->
                     ${senderName ? `
-                    <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin-top: 32px; border-top: 1px solid #e5e7eb; padding-top: 24px;">
+                    <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin-top: 40px; border-top: 1px solid #f1f5f9; padding-top: 24px;">
                       <tr>
                         <td>
                           <p style="margin: 0; font-size: 15px; font-weight: 600; color: #0f172a;">${senderName}</p>
-                          ${senderTitle ? `<p style="margin: 4px 0 0; font-size: 13px; color: #6b7280;">${senderTitle}</p>` : ""}
+                          ${senderTitle ? `<p style="margin: 4px 0 0; font-size: 13px; color: #64748b;">${senderTitle}</p>` : ""}
                         </td>
                       </tr>
                     </table>
@@ -109,8 +100,8 @@ function generateEmailHtml(params: {
           <!-- Footer -->
           <tr>
             <td style="padding: 24px 0; text-align: center;">
-              <p style="margin: 0; font-size: 11px; color: #9ca3af; line-height: 1.6;">
-                This email was crafted with personalized insights via Demarko Outreach Bot.
+              <p style="margin: 0; font-size: 11px; color: #9ca3af; font-weight: 500;">
+                Sent via <span style="color: #374151; font-weight: 600;">Demarko</span> Intelligence
               </p>
             </td>
           </tr>
@@ -324,6 +315,10 @@ export async function POST(req: NextRequest) {
             emailAddress: recipientEmail,
             lastUpdated: new Date().toISOString(),
           },
+          $unset: {
+            draftSubject: "",
+            draftBody: "",
+          }
         });
       }
 
@@ -390,6 +385,35 @@ export async function POST(req: NextRequest) {
 
       await db.collection("profiles").deleteOne(query);
       return NextResponse.json({ success: true, action: "delete-profile" });
+    }
+
+    // ── Action: save-draft ──
+    if (action === "save-draft") {
+      const { profileId, draftSubject, draftBody } = body;
+      if (!profileId) {
+        return NextResponse.json(
+          { error: "profileId is required." },
+          { status: 400 }
+        );
+      }
+
+      const { ObjectId } = await import("mongodb");
+      let query: Record<string, unknown>;
+      try {
+        query = { _id: new ObjectId(profileId) };
+      } catch {
+        query = { profileUrl: profileId };
+      }
+
+      await db.collection("profiles").updateOne(query, {
+        $set: { 
+          draftSubject, 
+          draftBody, 
+          lastUpdated: new Date().toISOString() 
+        },
+      });
+
+      return NextResponse.json({ success: true, action: "save-draft" });
     }
 
     return NextResponse.json(

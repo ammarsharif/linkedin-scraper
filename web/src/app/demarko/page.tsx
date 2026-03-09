@@ -105,6 +105,8 @@ export default function DemarkoPage() {
   const [senderTitle, setSenderTitle] = useState("");
   const [extraNotes, setExtraNotes] = useState("");
   const [sending, setSending] = useState(false);
+  const [generatingEmail, setGeneratingEmail] = useState(false);
+  const [showFullInsights, setShowFullInsights] = useState(false);
 
   // History modal
   const [viewingHistory, setViewingHistory] = useState<StoredProfile | null>(
@@ -190,19 +192,62 @@ export default function DemarkoPage() {
   }, [checking, loadProfiles]);
 
   // Compose email
-  function openCompose(profile: StoredProfile) {
-    setComposing(profile);
-    setEmailTo(profile.emailAddress || "");
+  async function generateEmailForProfile(profile: StoredProfile) {
+    setGeneratingEmail(true);
+    try {
+      const res = await fetch("/api/demarko/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profile }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setEmailSubject(data.subject);
+        setEmailBody(data.body);
+        // Persist the generated email immediately
+        saveLocalDraft(profile._id, data.subject, data.body);
+      } else {
+        setError(data.error || "Failed to generate AI email.");
+        fallbackEmailGen(profile);
+      }
+    } catch {
+      setError("Network error connecting to AI generator.");
+      fallbackEmailGen(profile);
+    } finally {
+      setGeneratingEmail(false);
+    }
+  }
 
-    // Auto-generate subject and body from profile
+  // Helper to save draft to DB and local state
+  async function saveLocalDraft(profileId: string, subject: string, body: string) {
+    // Update local state first so openCompose sees the draft if closed/reopened
+    setProfiles(prev => prev.map(p => 
+      p._id === profileId ? { ...p, draftSubject: subject, draftBody: body } : p
+    ));
+
+    try {
+      await fetch("/api/demarko", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "save-draft",
+          profileId,
+          draftSubject: subject,
+          draftBody: body,
+        }),
+      });
+    } catch (e) {
+      console.error("Failed to save draft", e);
+    }
+  }
+
+  function fallbackEmailGen(profile: StoredProfile) {
     const nameParts = profile.name.split(" ");
     const recipientName = nameParts.length > 1 ? `${nameParts[0]} ${nameParts[1]}` : nameParts[0];
-    
     setEmailSubject(
       `Quick note for ${recipientName} — loved your perspective on ${profile.areasOfExpertise?.[0] || "your work"}`
     );
 
-    // Build personalized email body
     let body = `I came across your LinkedIn profile and was genuinely impressed by your work`;
     if (profile.headline) {
       body += ` as ${profile.headline}`;
@@ -232,9 +277,34 @@ export default function DemarkoPage() {
     body += `Would you be open to a brief conversation this week? I'd really value your perspective.\n\nLooking forward to hearing from you!`;
 
     setEmailBody(body);
+  }
+
+  function openCompose(profile: StoredProfile) {
+    setComposing(profile);
+    setEmailTo(profile.emailAddress || "");
     setExtraNotes("");
     setError("");
+    setShowFullInsights(false);
+
+    if (profile.draftSubject && profile.draftBody) {
+      setEmailSubject(profile.draftSubject);
+      setEmailBody(profile.draftBody);
+    } else {
+      setEmailSubject("Generating subject with AI...");
+      setEmailBody("Generating personalized email body with AI...");
+      // Auto-generate using AI only if no draft exists
+      generateEmailForProfile(profile);
+    }
   }
+
+  // Auto-save draft when editing
+  useEffect(() => {
+    if (!composing || generatingEmail) return;
+    const timer = setTimeout(() => {
+      saveLocalDraft(composing._id, emailSubject, emailBody);
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [emailSubject, emailBody, composing, generatingEmail]);
 
   async function handleSendEmail() {
     if (!composing || !emailTo || !emailSubject || !emailBody) {
@@ -1037,16 +1107,45 @@ export default function DemarkoPage() {
                   border: "1px solid rgba(255,255,255,0.04)",
                 }}
               >
-                <p
-                  className="text-[10px] font-bold uppercase tracking-wider mb-2"
-                  style={{ color: "#5a5e72" }}
-                >
-                  Profile Insights (used for personalization)
-                </p>
+                <div className="flex justify-between items-center mb-2">
+                  <p
+                    className="text-[10px] font-bold uppercase tracking-wider"
+                    style={{ color: "#5a5e72" }}
+                  >
+                    Profile Insights (used for personalization)
+                  </p>
+                  <button
+                    onClick={() => generateEmailForProfile(composing)}
+                    disabled={generatingEmail}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition-all disabled:opacity-50"
+                    style={{
+                      background: "rgba(249,115,22,0.1)",
+                      color: DEMARKO_COLOR,
+                      border: "1px solid rgba(249,115,22,0.2)",
+                    }}
+                  >
+                    <Zap size={12} className={generatingEmail ? "animate-pulse" : ""} />
+                    <span>{generatingEmail ? "Generating..." : "Regenerate with AI"}</span>
+                  </button>
+                </div>
                 <p className="text-xs text-gray-400 leading-relaxed">
-                  {composing.executiveSummary
-                    ? composing.executiveSummary.slice(0, 200) + "..."
-                    : `${composing.name} — ${composing.headline}`}
+                  {composing.executiveSummary ? (
+                    <>
+                      {showFullInsights 
+                        ? composing.executiveSummary 
+                        : composing.executiveSummary.slice(0, 180) + "..."
+                      }
+                      <button 
+                        onClick={() => setShowFullInsights(!showFullInsights)}
+                        className="ml-2 text-[10px] font-bold underline transition-all hover:text-white"
+                        style={{ color: DEMARKO_COLOR }}
+                      >
+                        {showFullInsights ? "Show Less" : "See All"}
+                      </button>
+                    </>
+                  ) : (
+                    `${composing.name} — ${composing.headline}`
+                  )}
                 </p>
               </div>
 

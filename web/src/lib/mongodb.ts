@@ -1,49 +1,41 @@
 import { MongoClient, Db } from "mongodb";
+import dns from "dns";
 
-// Note: Removed the manual dns.setServers call as it can cause ECONNREFUSED 
-// on serverless platforms like Vercel which manage their own networking.
-// If you encounter local DNS issues, please set your computer's DNS manually.
+// Force the Node.js process to use Google DNS servers.
+// This resolves "ECONNREFUSED" or "querySrv" errors often caused by local DNS 
+// failing to resolve MongoDB Atlas SRV records.
+dns.setServers(["8.8.8.8", "8.8.4.4"]);
 
 const MONGODB_URI = process.env.MONGODB_URI as string;
-const DB_NAME = "linkedin-scraper";
 
 if (!MONGODB_URI) {
-  throw new Error("MONGODB_URI is not defined in environment variables.");
+  throw new Error("MONGODB_URI is not defined in environment variables. Connection skipped.");
 }
 
-/** 
- * Keep a global reference to the MongoDB client and database
- * to prevent multiple connections in serverless environments 
- * and during hot-reloads in development.
- */
-let cachedClient: MongoClient | null = (global as any).mongoClient || null;
-let cachedDb: Db | null = (global as any).mongoDb || null;
+const DB_NAME = "linkedin-scraper";
+
+let cachedClient: MongoClient | null = null;
+let cachedDb: Db | null = null;
 
 export async function getDatabase(): Promise<Db> {
   if (cachedDb) return cachedDb;
 
   try {
-    const client = new MongoClient(MONGODB_URI, {
-      connectTimeoutMS: 10000,
-      serverSelectionTimeoutMS: 10000,
-      maxPoolSize: 10, // Optimize for serverless functions
+    const client = new MongoClient(MONGODB_URI as string, {
+      connectTimeoutMS: 10000, // 10s connection timeout
     });
-
     await client.connect();
     const db = client.db(DB_NAME);
 
-    // Store in cache for this instance
     cachedClient = client;
     cachedDb = db;
-
-    // Store in global for Next.js hot-reloading (development)
-    (global as any).mongoClient = client;
-    (global as any).mongoDb = db;
 
     return db;
   } catch (err: any) {
     if (err.message?.includes("ECONNREFUSED") || err.code === "ECONNREFUSED") {
-      console.error("MongoDB Connection Refused. Check if your connection string is correct and Atlas allows your current IP (or 0.0.0.0 for Vercel).");
+      throw new Error(
+        "MongoDB Connection Refused. This is usually a DNS issue. Try changing your computer's DNS to: Primary: 8.8.8.8 (Google), Secondary: 1.1.1.1 (Cloudflare)."
+      );
     }
     throw err;
   }
@@ -71,6 +63,8 @@ export interface StoredProfile {
   // Email tracking
   emailAddress?: string;
   emailsSent: EmailRecord[];
+  draftSubject?: string;
+  draftBody?: string;
   // Timestamps
   scrapedAt: string;
   lastUpdated: string;
