@@ -10,10 +10,13 @@ import {
   Mail, 
   RefreshCw,
   Headphones,
+  UserCheck,
   CheckCircle2,
   Copy,
-  ChevronLeft
-, UserCheck} from "lucide-react";
+  ChevronLeft,
+  MessageCircle,
+  Lightbulb
+} from "lucide-react";
 
 interface StoredProfile {
   _id: string;
@@ -30,11 +33,11 @@ interface StoredProfile {
   emailAddress?: string;
 }
 
-const CINDY_GRADIENT = "linear-gradient(135deg, #10b981, #059669, #34d399)";
-const CINDY_COLOR = "#10b981";
-const CINDY_SOFT = "rgba(16, 185, 129, 0.1)";
+const CARA_GRADIENT = "linear-gradient(135deg, #f43f5e, #e11d48, #be123c)";
+const CARA_COLOR = "#f43f5e";
+const CARA_SOFT = "rgba(244, 63, 94, 0.1)";
 
-export default function CindyPage() {
+export default function CaraPage() {
   const router = useRouter();
   const [checking, setChecking] = useState(true);
   const [profiles, setProfiles] = useState<StoredProfile[]>([]);
@@ -43,8 +46,9 @@ export default function CindyPage() {
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
 
   const [selectedProfile, setSelectedProfile] = useState<StoredProfile | null>(null);
-  const [prospectMessage, setProspectMessage] = useState("");
-  const [generatedReply, setGeneratedReply] = useState("");
+  const [salesScript, setSalesScript] = useState("");
+  const [simulationResponse, setSimulationResponse] = useState("");
+  const [simulationAnalysis, setSimulationAnalysis] = useState("");
   const [generating, setGenerating] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -63,7 +67,7 @@ export default function CindyPage() {
   const loadProfiles = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/cindy");
+      const res = await fetch("/api/cara");
       const data = await res.json();
       if (res.ok && data.profiles) {
         setProfiles(data.profiles);
@@ -81,41 +85,44 @@ export default function CindyPage() {
     if (!checking) loadProfiles();
   }, [checking, loadProfiles]);
 
-  async function generateReply() {
-    if (!prospectMessage.trim()) {
-      showToast("Please enter the prospect's message to reply to.", "error");
+  async function generateSimulation() {
+    if (!salesScript.trim()) {
+      showToast("Please enter your pitch or sales script first.", "error");
       return;
     }
     if (!selectedProfile) return;
 
     setGenerating(true);
-    setGeneratedReply("");
+    setSimulationResponse("");
+    setSimulationAnalysis("");
+    
     try {
-      const res = await fetch("/api/cindy/generate", {
+      const res = await fetch("/api/cara/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           profile: selectedProfile,
-          prospectMessage,
+          salesScript,
         }),
       });
       const data = await res.json();
       if (data.success) {
-        setGeneratedReply(data.reply);
+        setSimulationResponse(data.response);
+        setSimulationAnalysis(data.analysis);
       } else {
-        showToast(data.error || "Failed to generate reply", "error");
+        showToast(data.error || "Failed to generate simulation", "error");
       }
     } catch {
-      showToast("Network error generating reply", "error");
+      showToast("Network error generating simulation", "error");
     } finally {
       setGenerating(false);
     }
   }
 
   const copyToClipboard = () => {
-    if (!generatedReply) return;
-    navigator.clipboard.writeText(generatedReply);
-    showToast("Reply copied to clipboard!", "success");
+    if (!simulationResponse) return;
+    navigator.clipboard.writeText(simulationResponse);
+    showToast("Feedback copied to clipboard!", "success");
   };
 
   const filteredProfiles = profiles.filter((p) => {
@@ -155,12 +162,12 @@ export default function CindyPage() {
             <div style={{ width: 1, height: 20, background: "rgba(255,255,255,0.08)" }} />
             
             <div className="flex items-center gap-2.5">
-              <div className="flex items-center justify-center rounded-lg shadow-lg" style={{ width: 32, height: 32, background: CINDY_GRADIENT }}>
-                <Headphones size={16} stroke="white" />
+              <div className="flex items-center justify-center rounded-lg shadow-lg" style={{ width: 32, height: 32, background: CARA_GRADIENT }}>
+                <UserCheck size={16} stroke="white" />
               </div>
               <div>
-                <p className="text-sm font-bold" style={{ color: "#e5e7eb", lineHeight: 1.2 }}>Cindy</p>
-                <p className="text-[11px]" style={{ color: "#4b5268" }}>Customer Service</p>
+                <p className="text-sm font-bold" style={{ color: "#e5e7eb", lineHeight: 1.2 }}>Cara</p>
+                <p className="text-[11px]" style={{ color: "#4b5268" }}>Avatar Simulator</p>
               </div>
             </div>
 
@@ -178,30 +185,13 @@ export default function CindyPage() {
                 <MessageSquare size={13} strokeWidth={2.5} />
                 <span>Inti</span>
               </button>
+              <button onClick={() => router.push("/cindy")} className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border" style={{ background: "rgba(0,0,0,0.4)", borderColor: "rgba(16,185,129,0.3)", color: "#10b981" }}>
+                <Headphones size={13} strokeWidth={2.5} />
+                <span>Cindy</span>
+              </button>
               <button onClick={() => { if(localStorage.getItem("sienna_payload")) router.push("/sienna") }} className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border" style={{ background: "rgba(0,0,0,0.4)", borderColor: "rgba(201,110,245,0.3)", color: "#c96ef5" }}>
                 <Zap size={13} strokeWidth={2.5} />
                 <span>Sienna</span>
-              </button>
-            
-              <button
-                onClick={() => router.push("/cara")}
-                className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border"
-                style={{
-                  background: "rgba(0,0,0,0.4)",
-                  borderColor: "rgba(244,63,94,0.3)",
-                  color: "#f43f5e",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "rgba(244,63,94,0.08)";
-                  e.currentTarget.style.borderColor = "rgba(244,63,94,0.5)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "rgba(0,0,0,0.4)";
-                  e.currentTarget.style.borderColor = "rgba(244,63,94,0.3)";
-                }}
-              >
-                  <UserCheck size={13} strokeWidth={2.5} />
-                <span>Cara</span>
               </button>
             </nav>
           </div>
@@ -220,22 +210,22 @@ export default function CindyPage() {
           <div className="animate-fade-in">
             <div className="mb-8">
               <h1 className="text-2xl font-extrabold tracking-tight text-white mb-2">
-                Prospect Customer Support <span className="bg-clip-text text-transparent" style={{ backgroundImage: CINDY_GRADIENT }}>Hub</span>
+                Client Avatar <span className="bg-clip-text text-transparent" style={{ backgroundImage: CARA_GRADIENT }}>Simulation</span>
               </h1>
-              <p className="text-sm mt-1" style={{ color: "#5a5e72" }}>Provide intelligent, helpful replies to prospects instantly.</p>
+              <p className="text-sm mt-1" style={{ color: "#5a5e72" }}>Simulate real-world buyer reactions to your sales scripts and pitches.</p>
             </div>
             
             <input 
-              type="text" placeholder="Search profiles..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full sm:max-w-md rounded-xl px-4 py-3 text-sm outline-none mb-6 border transition-all focus:border-[#10b981]"
+              type="text" placeholder="Search profiles to simulate..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full sm:max-w-md rounded-xl px-4 py-3 text-sm outline-none mb-6 border transition-all focus:border-[#f43f5e]"
               style={{ background: "rgba(0,0,0,0.4)", borderColor: "rgba(255,255,255,0.1)", color: "#e5e7eb" }}
             />
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {filteredProfiles.map(p => (
-                <div key={p._id} className="p-5 rounded-2xl border transition-all" style={{ background: "rgba(0,0,0,0.3)", borderColor: "rgba(255,255,255,0.06)" }} onMouseEnter={e => e.currentTarget.style.borderColor="rgba(16,185,129,0.3)"} onMouseLeave={e => e.currentTarget.style.borderColor="rgba(255,255,255,0.06)"}>
+                <div key={p._id} className="p-5 rounded-2xl border transition-all cursor-pointer hover:-translate-y-1" style={{ background: "rgba(0,0,0,0.3)", borderColor: "rgba(255,255,255,0.06)" }} onMouseEnter={e => e.currentTarget.style.borderColor="rgba(244,63,94,0.3)"} onMouseLeave={e => e.currentTarget.style.borderColor="rgba(255,255,255,0.06)"}>
                   <div className="flex items-center gap-3 mb-3">
-                    <div className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white shadow-xl" style={{ background: CINDY_GRADIENT }}>
+                    <div className="w-10 h-10 rounded-full flex items-center justify-center font-bold text-white shadow-xl" style={{ background: CARA_GRADIENT }}>
                       {p.name.charAt(0)}
                     </div>
                     <div>
@@ -243,7 +233,7 @@ export default function CindyPage() {
                       <p className="text-xs text-gray-500 line-clamp-1">{p.headline}</p>
                     </div>
                   </div>
-                  <button onClick={() => setSelectedProfile(p)} className="w-full mt-3 py-2 rounded-lg text-xs cursor-pointer font-bold text-[#10b981] border border-[#10b981] bg-[rgba(16,185,129,0.1)] hover:bg-[rgba(16,185,129,0.2)] transition-all">Support & Reply</button>
+                  <button onClick={() => setSelectedProfile(p)} className="w-full mt-3 py-2 rounded-lg text-xs cursor-pointer font-bold text-[#f43f5e] border border-[#f43f5e] bg-[rgba(244,63,94,0.1)] hover:bg-[rgba(244,63,94,0.2)] transition-all">Select Persona</button>
                 </div>
               ))}
             </div>
@@ -255,62 +245,84 @@ export default function CindyPage() {
             )}
             
             {loading && profiles.length === 0 && (
-              <div className="flex items-center gap-2 justify-center py-12 text-gray-400 text-sm">
+              <div className="flex items-center justify-center gap-2 py-12 text-gray-400 text-sm">
                  <RefreshCw size={16} className="animate-spin" /> Loading profiles...
               </div>
             )}
           </div>
         ) : (
           <div className="animate-fade-in max-w-4xl mx-auto">
-            <button onClick={() => { setSelectedProfile(null); setGeneratedReply(""); setProspectMessage(""); }} className="flex items-center gap-2 text-sm text-gray-400 hover:text-white cursor-pointer transition-all mb-6">
-              <ChevronLeft size={16} /> Back to profiles
+            <button onClick={() => { setSelectedProfile(null); setSimulationResponse(""); setSimulationAnalysis(""); setSalesScript(""); }} className="flex items-center gap-2 text-sm text-gray-400 hover:text-white cursor-pointer transition-all mb-6">
+              <ChevronLeft size={16} /> Back to personas
             </button>
 
             <div className="p-6 md:p-8 rounded-3xl border mb-6" style={{ background: "rgba(8,9,16,0.6)", borderColor: "rgba(255,255,255,0.08)", backdropFilter: "blur(20px)" }}>
               <div className="flex items-center gap-4 mb-8 pb-6 border-b border-white/10">
-                <div className="w-14 h-14 rounded-2xl flex items-center justify-center font-bold text-xl text-white shadow-2xl" style={{ background: CINDY_GRADIENT }}>
+                <div className="w-14 h-14 rounded-2xl flex items-center justify-center font-bold text-xl text-white shadow-2xl relative" style={{ background: CARA_GRADIENT }}>
                   {selectedProfile.name.charAt(0)}
+                  <span className="absolute -bottom-2 -right-2 bg-gray-900 rounded-full p-1 border border-gray-700">
+                    <UserCheck size={14} className="text-[#f43f5e]" />
+                  </span>
                 </div>
                 <div>
-                  <h2 className="text-xl font-bold text-white">{selectedProfile.name}</h2>
+                  <h2 className="text-xl font-bold text-white">Simulating: {selectedProfile.name}</h2>
                   <p className="text-sm text-gray-400">{selectedProfile.headline}</p>
                 </div>
               </div>
 
               <div className="mb-6">
-                <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Message from Prospect</label>
+                <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Your Sales Pitch / Message</label>
                 <textarea 
-                  value={prospectMessage} onChange={(e) => setProspectMessage(e.target.value)}
-                  placeholder="Paste the email or message sent by the prospect..."
-                  className="w-full rounded-xl px-4 py-3 text-sm outline-none resize-none min-h-[120px]"
+                  value={salesScript} onChange={(e) => setSalesScript(e.target.value)}
+                  placeholder="Paste the email, cold flow, or script you plan to use on them..."
+                  className="w-full rounded-xl px-4 py-3 text-sm outline-none resize-none min-h-[140px] focus:border-[#f43f5e] transition-all"
                   style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.1)", color: "#e5e7eb" }}
                 />
               </div>
 
               <button 
-                onClick={generateReply} disabled={generating || !prospectMessage.trim()}
-                className="w-full py-3.5 rounded-xl font-bold flex items-center justify-center gap-2 cursor-pointer transition-all disabled:opacity-50"
-                style={{ background: CINDY_GRADIENT, color: "white" }}
+                onClick={generateSimulation} disabled={generating || !salesScript.trim()}
+                className="w-full py-3.5 rounded-xl font-bold flex items-center justify-center gap-2 cursor-pointer transition-all disabled:opacity-50 hover:shadow-lg"
+                style={{ background: CARA_GRADIENT, color: "white", boxShadow: "0 4px 14px rgba(244,63,94,0.25)" }}
               >
-                {generating ? <RefreshCw size={18} className="animate-spin" /> : <Headphones size={18} />}
-                {generating ? "Generating intelligent reply..." : "Generate Helpful Reply"}
+                {generating ? <RefreshCw size={18} className="animate-spin" /> : <Zap size={18} />}
+                {generating ? "Simulating their reaction..." : "Test Pitch on Persona"}
               </button>
             </div>
 
-            {generatedReply && (
-              <div className="p-6 md:p-8 rounded-3xl border animate-fade-in" style={{ background: "rgba(16,185,129,0.05)", borderColor: "rgba(16,185,129,0.2)" }}>
-                 <div className="flex items-center justify-between mb-4">
-                   <div className="flex items-center gap-2 text-[#10b981]">
-                     <CheckCircle2 size={18} />
-                     <h3 className="font-bold">Generated Reply</h3>
+            {simulationResponse && simulationAnalysis && (
+              <div className="animate-fade-in grid gap-6">
+                {/* Simulated Response */}
+                <div className="relative p-6 md:p-8 rounded-3xl border" style={{ background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.1)" }}>
+                   <div className="absolute -top-3 left-6 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider shadow-lg" style={{ background: "#1e293b", color: "#f8fafc", border: "1px solid #334155" }}>
+                     In-Character Response
                    </div>
-                   <button onClick={copyToClipboard} className="flex items-center cursor-pointer gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-[#10b981] text-[#10b981] hover:bg-[#10b981] hover:text-white transition-all">
-                     <Copy size={14} /> Copy
-                   </button>
-                 </div>
-                 <div className="text-gray-300 text-sm leading-relaxed whitespace-pre-wrap">
-                   {generatedReply}
-                 </div>
+                   <div className="flex items-start gap-4 mt-2">
+                     <MessageCircle size={24} className="text-gray-400 shrink-0 mt-1" />
+                     <div className="text-gray-300 text-sm leading-relaxed whitespace-pre-wrap italic">
+                       "{simulationResponse}"
+                     </div>
+                   </div>
+                </div>
+
+                {/* Analysis / Feedback */}
+                <div className="relative p-6 md:p-8 rounded-3xl border" style={{ background: "rgba(244,63,94,0.05)", borderColor: "rgba(244,63,94,0.2)" }}>
+                   <div className="absolute -top-3 left-6 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider shadow-lg" style={{ background: "#f43f5e", color: "white" }}>
+                     Breakdown & Feedback
+                   </div>
+                   <div className="flex items-start gap-4 mt-2">
+                     <Lightbulb size={24} className="text-[#f43f5e] shrink-0 mt-1" />
+                     <div className="text-gray-200 text-sm leading-relaxed whitespace-pre-wrap">
+                       {simulationAnalysis}
+                     </div>
+                   </div>
+                   
+                   <div className="mt-6 pt-6 border-t border-[#f43f5e]/20 flex justify-end">
+                      <button onClick={copyToClipboard} className="flex items-center gap-1.5 text-xs px-4 py-2 rounded-xl bg-[#f43f5e]/10 text-[#f43f5e] hover:bg-[#f43f5e]/20 transition-all font-bold cursor-pointer">
+                        <Copy size={14} /> Copy Feedback
+                      </button>
+                   </div>
+                </div>
               </div>
             )}
           </div>

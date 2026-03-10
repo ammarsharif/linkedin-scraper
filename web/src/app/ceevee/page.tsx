@@ -12,7 +12,7 @@ import {
   Zap, 
   RotateCcw, 
   FileText 
-, Headphones} from "lucide-react";
+, Headphones, UserCheck} from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
