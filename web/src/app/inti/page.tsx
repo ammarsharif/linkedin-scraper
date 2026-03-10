@@ -16,7 +16,7 @@ import {
   Copy, 
   Check, 
   RotateCcw 
-} from "lucide-react";
+, Headphones} from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -575,6 +575,27 @@ export default function IntiPage() {
               >
                   <Zap size={13} strokeWidth={2.5} />
                 <span>Sienna</span>
+              </button>
+            
+              <button
+                onClick={() => router.push("/cindy")}
+                className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border"
+                style={{
+                  background: "rgba(0,0,0,0.4)",
+                  borderColor: "rgba(16,185,129,0.3)",
+                  color: "#10b981",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "rgba(16,185,129,0.08)";
+                  e.currentTarget.style.borderColor = "rgba(16,185,129,0.5)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "rgba(0,0,0,0.4)";
+                  e.currentTarget.style.borderColor = "rgba(16,185,129,0.3)";
+                }}
+              >
+                  <Headphones size={13} strokeWidth={2.5} />
+                <span>Cindy</span>
               </button>
             </nav>
           </div>
