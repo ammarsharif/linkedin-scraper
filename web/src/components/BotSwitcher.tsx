@@ -20,10 +20,10 @@ export const BOTS = [
   { id: "ceevee", name: "Ceevee", desc: "Email Enrichment", path: "/ceevee", icon: Search, color: "#0ea5e9", bg: "rgba(14,165,233,0.1)" },
   { id: "demarko", name: "Demarko", desc: "Cold Outreach", path: "/demarko", icon: Mail, color: "#f97316", bg: "rgba(249,115,22,0.1)" },
   { id: "inti", name: "Inti", desc: "DM Integration", path: "/inti", icon: MessageSquare, color: "#818cf8", bg: "rgba(99,102,241,0.1)" },
-  { id: "cindy", name: "Cindy", desc: "Voice Transcripts", path: "/cindy", icon: Headphones, color: "#10b981", bg: "rgba(16,185,129,0.1)" },
+  { id: "cindy", name: "Cindy", desc: "Customer Service", path: "/cindy", icon: Headphones, color: "#10b981", bg: "rgba(16,185,129,0.1)" },
   { id: "sienna", name: "Sienna", desc: "Lead Scoring", path: "/sienna", icon: Zap, color: "#c96ef5", bg: "rgba(201,110,245,0.1)", requiredLocal: "sienna_payload" },
   { id: "cara", name: "Cara", desc: "Avatar Simulator", path: "/cara", icon: UserCheck, color: "#f43f5e", bg: "rgba(244,63,94,0.1)" },
-  { id: "cora", name: "Cora", desc: "Content Repurposing", path: "/cora", icon: Share2, color: "#fbbf24", bg: "rgba(251,191,36,0.1)" },
+  // { id: "cora", name: "Cora", desc: "Content Repurposing", path: "/cora", icon: Share2, color: "#fbbf24", bg: "rgba(251,191,36,0.1)" },
 ];
 
 export function BotSwitcher({ currentBotId }: { currentBotId: string }) {

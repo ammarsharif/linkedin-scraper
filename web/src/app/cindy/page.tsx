@@ -50,6 +50,9 @@ export default function CindyPage() {
   const [generating, setGenerating] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
+  const [isTimerRunning, setIsTimerRunning] = useState(false);
+  const [timeLeft, setTimeLeft] = useState(120); // 2 minutes (120 seconds)
+
   const showToast = useCallback((message: string, type: "success" | "error") => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 4000);
@@ -83,6 +86,40 @@ export default function CindyPage() {
     if (!checking) loadProfiles();
   }, [checking, loadProfiles]);
 
+  useEffect(() => {
+    let timer: NodeJS.Timeout;
+    if (isTimerRunning && timeLeft > 0) {
+      timer = setTimeout(() => {
+        setTimeLeft((prev) => prev - 1);
+      }, 1000);
+    } else if (isTimerRunning && timeLeft === 0) {
+      setIsTimerRunning(false);
+      generateReply();
+    }
+    return () => clearTimeout(timer);
+  }, [isTimerRunning, timeLeft]);
+
+  const startSimulation = () => {
+    if (!prospectMessage.trim()) {
+      showToast("Please enter the prospect's message first.", "error");
+      return;
+    }
+    setGeneratedReply("");
+    setTimeLeft(120);
+    setIsTimerRunning(true);
+  };
+
+  const cancelSimulation = () => {
+    setIsTimerRunning(false);
+    setTimeLeft(120);
+  };
+
+  const skipTimer = () => {
+    setIsTimerRunning(false);
+    setTimeLeft(0);
+    generateReply();
+  };
+
   async function generateReply() {
     if (!prospectMessage.trim()) {
       showToast("Please enter the prospect's message to reply to.", "error");
@@ -111,6 +148,7 @@ export default function CindyPage() {
       showToast("Network error generating reply", "error");
     } finally {
       setGenerating(false);
+      setIsTimerRunning(false);
     }
   }
 
@@ -226,7 +264,7 @@ export default function CindyPage() {
           </div>
         ) : (
           <div className="animate-fade-in max-w-4xl mx-auto">
-            <button onClick={() => { setSelectedProfile(null); setGeneratedReply(""); setProspectMessage(""); }} className="flex items-center gap-2 text-sm text-gray-400 hover:text-white cursor-pointer transition-all mb-6">
+            <button onClick={() => { setSelectedProfile(null); setGeneratedReply(""); setProspectMessage(""); setIsTimerRunning(false); }} className="flex items-center gap-2 text-sm text-gray-400 hover:text-white cursor-pointer transition-all mb-6">
               <ChevronLeft size={16} /> Back to profiles
             </button>
 
@@ -245,20 +283,48 @@ export default function CindyPage() {
                 <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Message from Prospect</label>
                 <textarea 
                   value={prospectMessage} onChange={(e) => setProspectMessage(e.target.value)}
+                  disabled={isTimerRunning || generating}
                   placeholder="Paste the email or message sent by the prospect..."
-                  className="w-full rounded-xl px-4 py-3 text-sm outline-none resize-none min-h-[120px]"
+                  className="w-full rounded-xl px-4 py-3 text-sm outline-none resize-none min-h-[120px] disabled:opacity-50"
                   style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.1)", color: "#e5e7eb" }}
                 />
               </div>
 
-              <button 
-                onClick={generateReply} disabled={generating || !prospectMessage.trim()}
-                className="w-full py-3.5 rounded-xl font-bold flex items-center justify-center gap-2 cursor-pointer transition-all disabled:opacity-50"
-                style={{ background: CINDY_GRADIENT, color: "white" }}
-              >
-                {generating ? <RefreshCw size={18} className="animate-spin" /> : <Headphones size={18} />}
-                {generating ? "Generating intelligent reply..." : "Generate Helpful Reply"}
-              </button>
+              {!isTimerRunning && !generating && !generatedReply && (
+                <button 
+                  onClick={startSimulation} disabled={!prospectMessage.trim()}
+                  className="w-full py-3.5 rounded-xl font-bold flex items-center justify-center gap-2 cursor-pointer transition-all disabled:opacity-50"
+                  style={{ background: CINDY_GRADIENT, color: "white" }}
+                >
+                  <MessageSquare size={18} />
+                  Receive Message
+                </button>
+              )}
+
+              {isTimerRunning && (
+                <div className="w-full p-4 rounded-xl border border-yellow-500/20 bg-yellow-500/10 mb-4 animate-fade-in">
+                  <div className="flex flex-col items-center justify-center">
+                    <p className="text-yellow-400 font-bold mb-2">Human Representative Unavailable</p>
+                    <p className="text-sm text-gray-300 mb-4">Time until Cindy auto-replies: <span className="font-mono font-bold">{Math.floor(timeLeft / 60)}:{(timeLeft % 60).toString().padStart(2, "0")}</span></p>
+                    
+                    <div className="flex items-center gap-3 w-full">
+                      <button onClick={cancelSimulation} className="flex-1 py-2 rounded-lg text-sm font-bold border border-white/10 hover:bg-white/5 text-white transition-all cursor-pointer">
+                        Reply Manually
+                      </button>
+                      <button onClick={skipTimer} className="flex-1 py-2 rounded-lg text-sm font-bold border border-[#10b981] bg-[rgba(16,185,129,0.1)] hover:bg-[rgba(16,185,129,0.2)] text-[#10b981] transition-all cursor-pointer">
+                        Skip Timer (Auto-Reply Now)
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {generating && (
+                <div className="w-full py-4 flex flex-col items-center justify-center gap-3 bg-[rgba(16,185,129,0.05)] border border-[rgba(16,185,129,0.2)] rounded-xl animate-fade-in">
+                  <RefreshCw size={24} className="animate-spin text-[#10b981]" />
+                  <p className="text-sm font-bold text-[#10b981]">Cindy is studying the profile and message context...</p>
+                </div>
+              )}
             </div>
 
             {generatedReply && (
