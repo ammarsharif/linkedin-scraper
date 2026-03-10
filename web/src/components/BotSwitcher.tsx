@@ -29,6 +29,7 @@ export const BOTS = [
 export function BotSwitcher({ currentBotId }: { currentBotId: string }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -42,6 +43,11 @@ export function BotSwitcher({ currentBotId }: { currentBotId: string }) {
   }, []);
 
   const currentBot = BOTS.find(b => b.id === currentBotId);
+
+  const filteredBots = BOTS.filter(b => 
+    b.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+    b.desc.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   return (
     <div className="relative" ref={ref}>
@@ -67,11 +73,23 @@ export function BotSwitcher({ currentBotId }: { currentBotId: string }) {
             backdropFilter: "blur(24px)"
           }}
         >
+          <div className="px-3 py-2 mb-2">
+            <div className="relative">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input 
+                type="text" 
+                placeholder="Search bots..." 
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-white/5 border border-white/10 rounded-lg py-1.5 pl-9 pr-3 text-sm text-white placeholder-gray-500 outline-none focus:border-white/20 transition-all"
+              />
+            </div>
+          </div>
           <div className="px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
             Available Bots
           </div>
           <div className="grid grid-cols-1 gap-1 max-h-[400px] overflow-y-auto custom-scrollbar">
-            {BOTS.map(bot => (
+            {filteredBots.map(bot => (
               <button
                 key={bot.id}
                 onClick={() => {
