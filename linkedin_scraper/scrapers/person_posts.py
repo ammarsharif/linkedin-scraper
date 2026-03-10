@@ -32,33 +32,38 @@ class PersonPostsScraper(BaseScraper):
     def __init__(self, page: Page, callback: Optional[ProgressCallback] = None):
         super().__init__(page, callback or SilentCallback())
     
-    async def scrape(self, profile_url: str, limit: int = 10) -> List[Post]:
+    async def scrape(self, profile_url: str, limit: int = 10, on_progress=None) -> List[Post]:
         """
         Scrape posts from a LinkedIn person's activity feed.
         
         Args:
             profile_url: LinkedIn profile URL (e.g. https://linkedin.com/in/username/)
             limit: Maximum number of posts to scrape (default: 10)
+            on_progress: Optional async callback(stage, detail, pct) for real-time progress
             
         Returns:
             List of Post objects with text, images, engagement data
         """
         logger.info(f"Starting person posts scraping: {profile_url}")
         await self.callback.on_start("person_posts", profile_url)
+        if on_progress:
+            await on_progress("posts_nav", "Navigating to activity feed", 5)
         
         # Build the activity/posts URL
         activity_url = self._build_activity_url(profile_url)
         await self.navigate_and_wait(activity_url)
         await self.callback.on_progress("Navigated to activity page", 10)
+        if on_progress:
+            await on_progress("posts_nav", "Activity page loaded", 15)
         
         await self.check_rate_limit()
         
         # Wait for posts to load
-        await self._wait_for_posts_to_load()
+        await self._wait_for_posts_to_load(on_progress=on_progress)
         await self.callback.on_progress("Posts loaded", 20)
         
         # Scrape posts with scrolling
-        posts = await self._scrape_posts(limit)
+        posts = await self._scrape_posts(limit, on_progress=on_progress)
         await self.callback.on_progress(f"Scraped {len(posts)} posts", 100)
         await self.callback.on_complete("person_posts", posts)
         
@@ -83,7 +88,7 @@ class PersonPostsScraper(BaseScraper):
         
         return f"{base_url}/recent-activity/all/"
     
-    async def _wait_for_posts_to_load(self, timeout: int = 30000) -> None:
+    async def _wait_for_posts_to_load(self, timeout: int = 30000, on_progress=None) -> None:
         """Wait for the activity feed posts to load on the page."""
         try:
             await self.page.wait_for_load_state('domcontentloaded', timeout=timeout)
@@ -94,11 +99,13 @@ class PersonPostsScraper(BaseScraper):
         current_url = self.page.url
         print(f"[posts-debug] Current URL after nav: {current_url}", file=sys.stderr)
 
-        # Randomised extra time for dynamic content (2.5 - 5 s)
-        await self.page.wait_for_timeout(random.randint(2500, 5000))
+        # Shortened initial wait for dynamic content (1.5 - 3s)
+        await self.page.wait_for_timeout(random.randint(1500, 3000))
 
-        # Try scrolling to trigger lazy loading
-        for attempt in range(5):
+        # Reduced from 5 attempts to 3 — posts usually load in 1-2 attempts
+        for attempt in range(3):
+            if on_progress:
+                await on_progress("posts_loading", f"Waiting for posts (attempt {attempt+1}/3)", 20 + attempt * 5)
             await self._trigger_lazy_load()
 
             # Check multiple indicators for posts
@@ -124,36 +131,42 @@ class PersonPostsScraper(BaseScraper):
                 page_info.get('hasUrnShare') or page_info.get('hasFeedUpdate') or
                 page_info.get('hasOccludable') or page_info.get('feedContainerCount', 0) > 0):
                 logger.debug(f"Posts found after attempt {attempt + 1}")
+                if on_progress:
+                    await on_progress("posts_found", f"Posts detected on attempt {attempt+1}", 35)
                 return
 
-            await self.page.wait_for_timeout(random.randint(1800, 3500))
+            # Tighter wait between attempts (1.0 - 2.0s instead of 1.8 - 3.5s)
+            await self.page.wait_for_timeout(random.randint(1000, 2000))
 
         logger.warning("Posts may not have loaded fully")
     
     async def _trigger_lazy_load(self) -> None:
-        """Scroll the page with human-like variable speed to trigger lazy loading."""
+        """Scroll the page with human-like variable speed to trigger lazy loading.
+        Optimized: fewer steps (4-7 instead of 6-12) with tighter delays."""
         scroll_height = await self.page.evaluate('document.documentElement.scrollHeight')
-        steps = random.randint(6, 12)
+        steps = random.randint(4, 7)
         current = 0
         for i in range(steps):
-            # Variable step size - humans don't scroll in uniform increments
-            step = random.randint(200, 500)
+            # Variable step size - larger steps to cover ground faster
+            step = random.randint(350, 700)
             current = min(current + step, scroll_height)
             await self.page.evaluate(f'window.scrollTo(0, {current})')
-            await self.page.wait_for_timeout(random.randint(150, 450))
+            await self.page.wait_for_timeout(random.randint(100, 250))
 
-        # Pause at the bottom like a human reading
-        await self.page.wait_for_timeout(random.randint(800, 1800))
+        # Shorter pause at the bottom (400-900ms instead of 800-1800ms)
+        await self.page.wait_for_timeout(random.randint(400, 900))
 
         # Scroll back up slightly to trigger any "see more" type loading
         await self.page.evaluate(f'window.scrollTo(0, {random.randint(200, 600)})')
-        await self.page.wait_for_timeout(random.randint(600, 1200))
+        await self.page.wait_for_timeout(random.randint(300, 700))
     
-    async def _scrape_posts(self, limit: int) -> List[Post]:
+    async def _scrape_posts(self, limit: int, on_progress=None) -> List[Post]:
         """Scrape posts with scrolling to load more."""
         posts: List[Post] = []
         scroll_count = 0
-        max_scrolls = (limit // 3) + 5  # More generous for person feeds
+        max_scrolls = (limit // 3) + 4  # Slightly tighter cap
+        prev_count = 0
+        stall_count = 0
         
         while len(posts) < limit and scroll_count < max_scrolls:
             # Click all "...more" buttons to expand full post text
@@ -167,6 +180,22 @@ class PersonPostsScraper(BaseScraper):
                     if len(posts) >= limit:
                         break
             
+            # Report progress
+            if on_progress:
+                pct = min(90, 35 + int((len(posts) / max(limit, 1)) * 55))
+                await on_progress("posts_scraping", f"Extracted {len(posts)}/{limit} posts", pct)
+            print(f"[posts-progress] {len(posts)}/{limit} posts scraped (scroll {scroll_count+1}/{max_scrolls})", file=sys.stderr)
+            
+            # Early exit if no new posts found after scrolling (stalled)
+            if len(posts) == prev_count:
+                stall_count += 1
+                if stall_count >= 2:
+                    print(f"[posts-progress] No new posts after {stall_count} scrolls, stopping early", file=sys.stderr)
+                    break
+            else:
+                stall_count = 0
+            prev_count = len(posts)
+            
             if len(posts) < limit:
                 await self._scroll_for_more_posts()
                 scroll_count += 1
@@ -175,18 +204,19 @@ class PersonPostsScraper(BaseScraper):
         return posts[:limit]
     
     async def _click_all_see_more_buttons(self) -> None:
-        """Click all '...more' / 'see more' buttons on the page to expand truncated posts."""
+        """Click all '...more' / 'see more' buttons on the page to expand truncated posts.
+        Optimized: reduced cap from 30 to 15, tighter delays."""
         try:
             # LinkedIn uses multiple selectors for the "see more" button
             see_more_selectors = [
                 'button.feed-shared-inline-show-more-text__see-more-less-toggle',
                 'button[class*="see-more"]',
                 'button:has-text("...more")',
-                'button:has-text("...more")',
                 'button:has-text("see more")',
                 'button:has-text("See more")',
             ]
             
+            clicked_any = False
             for selector in see_more_selectors:
                 try:
                     buttons = self.page.locator(selector)
@@ -194,20 +224,22 @@ class PersonPostsScraper(BaseScraper):
                     
                     if count > 0:
                         logger.debug(f"Found {count} 'see more' buttons with selector: {selector}")
-                        for i in range(min(count, 30)):  # Cap at 30 to avoid infinite loops
+                        for i in range(min(count, 15)):  # Reduced cap from 30 to 15
                             try:
                                 btn = buttons.nth(i)
                                 if await btn.is_visible():
-                                    await btn.click(timeout=2000)
-                                    # Randomised pause between clicks (0.2 - 0.8 s)
-                                    await asyncio.sleep(random.uniform(0.2, 0.8))
+                                    await btn.click(timeout=1500)
+                                    clicked_any = True
+                                    # Tighter pause between clicks (0.1 - 0.4s)
+                                    await asyncio.sleep(random.uniform(0.1, 0.4))
                             except Exception:
                                 continue
                 except Exception:
                     continue
             
-            # Wait for text to expand after clicking (randomised 0.8 - 1.8 s)
-            await self.page.wait_for_timeout(random.randint(800, 1800))
+            # Only wait if we actually clicked something (0.4 - 0.8s)
+            if clicked_any:
+                await self.page.wait_for_timeout(random.randint(400, 800))
             logger.debug("Finished clicking 'see more' buttons")
             
         except Exception as e:
@@ -551,24 +583,25 @@ class PersonPostsScraper(BaseScraper):
         return None
     
     async def _scroll_for_more_posts(self) -> None:
-        """Scroll down to load more posts with human-like timing."""
+        """Scroll down to load more posts with human-like timing.
+        Optimized: tighter wait ranges."""
         try:
             # Occasionally use keyboard End, sometimes scroll by pixels - vary the approach
             if random.random() < 0.5:
                 await self.page.keyboard.press('End')
             else:
-                scroll_by = random.randint(600, 1200)
+                scroll_by = random.randint(800, 1500)
                 await self.page.evaluate(f'window.scrollBy(0, {scroll_by})')
 
-            # Randomised wait: 1.5 - 3.5 s
-            await self.page.wait_for_timeout(random.randint(1500, 3500))
+            # Tighter wait: 0.8 - 2.0s (was 1.5 - 3.5s)
+            await self.page.wait_for_timeout(random.randint(800, 2000))
 
             # Also try clicking "Show more" buttons if present
             try:
                 show_more = self.page.locator('button:has-text("Show more results"), button:has-text("Show more")')
                 if await show_more.count() > 0:
                     await show_more.first.click()
-                    await self.page.wait_for_timeout(random.randint(1200, 2500))
+                    await self.page.wait_for_timeout(random.randint(800, 1500))
             except:
                 pass
         except Exception as e:

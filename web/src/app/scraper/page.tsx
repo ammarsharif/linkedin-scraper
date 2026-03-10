@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { 
   Linkedin, 
@@ -77,15 +77,28 @@ export default function ScraperPage() {
     type: "success" | "error";
   } | null>(null);
 
-  // UX: Loading stages for long scrapes
-  const [stageIndex, setStageIndex] = useState(0);
-  const stages = [
-    "Initializing secure connection",
-    "Loading profile structure",
-    "Scrolling through recent activity",
-    "Extracting posts & engagement",
-    "Finalizing raw data parsing",
-  ];
+  // Real-time SSE progress
+  const [liveStage, setLiveStage] = useState("");
+  const [liveDetail, setLiveDetail] = useState("");
+  const [livePct, setLivePct] = useState(0);
+  const [elapsedSec, setElapsedSec] = useState(0);
+  const abortRef = useRef<AbortController | null>(null);
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Stage labels for display
+  const stageLabels: Record<string, string> = {
+    init: "Initializing",
+    browser: "Launching browser",
+    profile: "Scraping profile",
+    posts: "Scraping posts",
+    posts_nav: "Loading activity feed",
+    posts_loading: "Waiting for posts",
+    posts_found: "Posts detected",
+    posts_scraping: "Extracting posts",
+    done: "Complete",
+    error: "Error",
+    result: "Done",
+  };
 
   // Check auth
   useEffect(() => {
@@ -133,23 +146,16 @@ export default function ScraperPage() {
     }
   }, [profileUrls, postsLimit, results]);
 
-  // Advance stage index over time during scraping to give user feedback
+  // Elapsed time counter
   useEffect(() => {
-    if (!loading || !currentProfile) {
-      setStageIndex(0);
-      return;
+    if (loading) {
+      setElapsedSec(0);
+      timerRef.current = setInterval(() => setElapsedSec(s => s + 1), 1000);
+    } else {
+      if (timerRef.current) clearInterval(timerRef.current);
     }
-
-    setStageIndex(0);
-    const timers = [
-      setTimeout(() => setStageIndex(1), 8000),      // loading structure
-      setTimeout(() => setStageIndex(2), 20000),     // scrolling
-      setTimeout(() => setStageIndex(3), 35000),     // fetching posts
-      setTimeout(() => setStageIndex(4), 50000),     // finalizing
-    ];
-
-    return () => timers.forEach(clearTimeout);
-  }, [loading, currentProfile]);
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [loading]);
 
   const showToast = useCallback(
     (message: string, type: "success" | "error") => {
@@ -158,6 +164,124 @@ export default function ScraperPage() {
     },
     []
   );
+
+  function formatElapsed(sec: number): string {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return m > 0 ? `${m}m ${s}s` : `${s}s`;
+  }
+
+  function handleCancel() {
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+    setLoading(false);
+    setCurrentProfile("");
+    setLiveStage("");
+    setLiveDetail("");
+    setLivePct(0);
+    showToast("Scraping cancelled", "error");
+  }
+
+  async function scrapeWithSSE(url: string): Promise<ScrapeResultItem | null> {
+    return new Promise((resolve) => {
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      setLiveStage("init");
+      setLiveDetail("Starting...");
+      setLivePct(0);
+
+      fetch("/api/scrape-stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profileUrl: url, postsLimit }),
+        signal: controller.signal,
+      })
+        .then(async (res) => {
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({ error: res.statusText }));
+            if (res.status === 401) {
+              showToast("LinkedIn session expired. Please re-authenticate.", "error");
+              localStorage.removeItem("scraper_state");
+              localStorage.removeItem("sienna_state");
+              localStorage.removeItem("sienna_payload");
+              localStorage.removeItem("ceevee_state");
+              localStorage.removeItem("inti_state");
+              await fetch("/api/auth", { method: "DELETE" });
+              router.push("/");
+              resolve(null);
+              return;
+            }
+            showToast(`Error scraping ${url}: ${data.error}`, "error");
+            resolve(null);
+            return;
+          }
+
+          const reader = res.body?.getReader();
+          if (!reader) { resolve(null); return; }
+
+          const decoder = new TextDecoder();
+          let buffer = "";
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+
+            // Parse SSE events from buffer
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || ""; // keep incomplete line
+
+            for (const line of lines) {
+              if (!line.startsWith("data: ")) continue;
+              try {
+                const evt = JSON.parse(line.slice(6));
+
+                if (evt.stage === "result") {
+                  // Final result
+                  const data = evt.data;
+                  if (data?.error) {
+                    showToast(`Error: ${data.error}`, "error");
+                    resolve(null);
+                  } else {
+                    resolve({
+                      profile: data.profile,
+                      posts: data.posts,
+                    });
+                  }
+                  return;
+                } else if (evt.stage === "error") {
+                  showToast(`Error: ${evt.detail}`, "error");
+                  resolve(null);
+                  return;
+                } else {
+                  // Progress update
+                  setLiveStage(evt.stage || "");
+                  setLiveDetail(evt.detail || "");
+                  setLivePct(evt.pct || 0);
+                }
+              } catch {
+                // skip malformed events
+              }
+            }
+          }
+
+          // If we got here without a result event, resolve null
+          resolve(null);
+        })
+        .catch((err) => {
+          if (err.name === "AbortError") {
+            resolve(null);
+          } else {
+            showToast(`Network error scraping ${url}`, "error");
+            resolve(null);
+          }
+        });
+    });
+  }
 
   async function handleScrape(e: React.FormEvent) {
     e.preventDefault();
@@ -185,49 +309,24 @@ export default function ScraperPage() {
       setCurrentProfile(url);
       setProgress({ current: i + 1, total: urls.length });
 
-      try {
-        const res = await fetch("/api/scrape", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ profileUrl: url, postsLimit }),
-        });
+      const result = await scrapeWithSSE(url);
 
-        const data = await res.json();
-
-        if (!res.ok) {
-          if (res.status === 401) {
-            showToast("LinkedIn session expired. Please re-authenticate.", "error");
-            localStorage.removeItem("scraper_state");
-            localStorage.removeItem("sienna_state");
-            localStorage.removeItem("sienna_payload");
-            localStorage.removeItem("ceevee_state");
-            localStorage.removeItem("inti_state");
-            await fetch("/api/auth", { method: "DELETE" });
-            router.push("/");
-            return;
-          }
-          showToast(`Error scraping ${url}: ${data.error}`, "error");
-          continue;
-        }
-
-        allResults.push({
-          profile: data.profile,
-          posts: data.posts,
-        });
-
+      if (result) {
+        allResults.push(result);
         setResults([...allResults]);
-      } catch {
-        showToast(`Network error scraping ${url}`, "error");
       }
 
       // Brief delay between profiles
       if (i < urls.length - 1) {
-        await new Promise((r) => setTimeout(r, 2000));
+        await new Promise((r) => setTimeout(r, 1000));
       }
     }
 
     setLoading(false);
     setCurrentProfile("");
+    setLiveStage("");
+    setLiveDetail("");
+    setLivePct(0);
 
     if (allResults.length > 0) {
       showToast(
@@ -236,6 +335,7 @@ export default function ScraperPage() {
       );
     }
   }
+
 
   function generateCSV(): string {
     const headers = [
@@ -603,17 +703,22 @@ export default function ScraperPage() {
               </button>
             </form>
 
-            {/* Progress indicator */}
+            {/* Progress indicator — real-time SSE */}
             {loading && currentProfile && (
               <div className="glass-card p-5 animate-fade-in border border-[#00b4d8]/20 shadow-[0_0_30px_rgba(0,180,216,0.1)]">
-                <div className="flex items-start gap-4 mb-5">
+                <div className="flex items-start gap-4 mb-4">
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#00b4d8]/10 text-[#00b4d8] shadow-inner mb-2 lg:mb-0">
                     <Activity size={20} strokeWidth={2.5} />
                   </div>
-                  <div>
-                    <h3 className="text-sm font-bold bg-linear-to-r from-[#0077B5] to-[#00b4d8] bg-clip-text text-transparent">
-                      Scraping Profile {progress.current} of {progress.total}
-                    </h3>
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-sm font-bold bg-linear-to-r from-[#0077B5] to-[#00b4d8] bg-clip-text text-transparent">
+                        Scraping Profile {progress.current} of {progress.total}
+                      </h3>
+                      <span className="text-xs font-mono px-2 py-0.5 rounded-md bg-white/5 text-white/70">
+                        {formatElapsed(elapsedSec)}
+                      </span>
+                    </div>
                     <p
                       className="text-xs font-mono mt-0.5 truncate max-w-[280px]"
                       style={{ color: "var(--text-muted)" }}
@@ -623,36 +728,56 @@ export default function ScraperPage() {
                   </div>
                 </div>
 
-                {/* Animated Stages */}
-                <div className="space-y-3.5 mb-5 px-1">
-                  {stages.map((stage, idx) => (
-                    <div key={idx} className={`flex items-center gap-3 text-sm transition-all duration-500 ${idx > stageIndex ? 'opacity-30' : 'opacity-100'} ${idx === stageIndex ? 'scale-105 transform translate-x-1.5 origin-left' : ''}`}>
-                      {idx < stageIndex ? (
-                        <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-green-500/20 text-green-500 shadow-sm shadow-green-500/20">
-                          <Check size={12} strokeWidth={3} />
-                        </div>
-                      ) : idx === stageIndex ? (
-                        <div className="spinner h-5 w-5 shrink-0" style={{ borderLeftColor: '#00b4d8', borderWidth: '2px' }} />
-                      ) : (
-                        <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-white/20 text-[10px] text-white/40">
-                          {idx + 1}
-                        </div>
+                {/* Live Status */}
+                <div className="mb-4 px-1">
+                  <div className="flex items-center gap-3 text-sm">
+                    <div className="spinner h-4 w-4 shrink-0" style={{ borderLeftColor: '#00b4d8', borderWidth: '2px' }} />
+                    <div className="flex-1 min-w-0">
+                      <span className="text-white font-medium">
+                        {stageLabels[liveStage] || liveStage || "Starting..."}
+                      </span>
+                      {liveDetail && (
+                        <p className="text-xs text-white/50 truncate mt-0.5">{liveDetail}</p>
                       )}
-                      <span className={`${idx === stageIndex ? 'text-white font-medium' : 'text-white/60'}`}>{stage}...</span>
                     </div>
-                  ))}
+                    <span className="text-xs font-mono font-bold text-[#00b4d8]">
+                      {livePct}%
+                    </span>
+                  </div>
                 </div>
 
-                <div className="h-1.5 rounded-full bg-white/5 overflow-hidden ring-1 ring-white/10">
+                {/* Progress bar */}
+                <div className="h-1.5 rounded-full bg-white/5 overflow-hidden ring-1 ring-white/10 mb-4">
                   <div
-                    className="h-full rounded-full bg-linear-to-r from-[#0077B5] to-[#00b4d8] transition-all duration-1000 ease-in-out relative flex items-center justify-end"
+                    className="h-full rounded-full bg-linear-to-r from-[#0077B5] to-[#00b4d8] transition-all duration-700 ease-out relative"
                     style={{
-                      width: `${Math.max(5, ((stageIndex + 1) / stages.length) * 100)}%`,
+                      width: `${Math.max(3, livePct)}%`,
                     }}
                   >
                     <div className="absolute inset-0 bg-white/20 animate-pulse"></div>
                   </div>
                 </div>
+
+                {/* Cancel button */}
+                <button
+                  onClick={handleCancel}
+                  className="w-full flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer border"
+                  style={{
+                    background: "rgba(239,68,68,0.05)",
+                    borderColor: "rgba(239,68,68,0.2)",
+                    color: "#f87171",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "rgba(239,68,68,0.1)";
+                    e.currentTarget.style.borderColor = "rgba(239,68,68,0.4)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "rgba(239,68,68,0.05)";
+                    e.currentTarget.style.borderColor = "rgba(239,68,68,0.2)";
+                  }}
+                >
+                  Cancel Scraping
+                </button>
               </div>
             )}
 
@@ -736,80 +861,6 @@ export default function ScraperPage() {
                     <span className="z-10 relative">Generate Hooks with Sienna</span>
                   </button>
                 </div>
-
-                {/* Ceevee CTA */}
-                <div className="ceevee-cta-card mt-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <div style={{
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      width: 24, height: 24, borderRadius: 6,
-                      background: "linear-gradient(135deg, #0284c7, #00b4d8)",
-                    }}>
-                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-                        <circle cx="11" cy="11" r="8" />
-                        <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                      </svg>
-                    </div>
-                    <span className="text-sm font-bold" style={{ background: "linear-gradient(135deg, #0284c7, #00b4d8)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Next Step: Ceevee</span>
-                  </div>
-                  <p className="text-xs mb-3" style={{ color: "var(--text-muted)" }}>
-                    AI-powered prospect research dossier with personalized conversation starters.
-                  </p>
-                  <button
-                    onClick={() => {
-                      if (results.length > 0) {
-                        localStorage.setItem("sienna_payload", JSON.stringify({
-                          profiles: results.map(r => r.profile),
-                          posts: results.flatMap(r => r.posts),
-                        }));
-                        localStorage.removeItem("ceevee_state");
-                      }
-                      router.push("/ceevee");
-                    }}
-                    className="group relative flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3.5 text-sm font-bold text-white shadow-lg shadow-blue-500/20 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-blue-500/40 active:translate-y-0 cursor-pointer overflow-hidden"
-                    style={{ background: "linear-gradient(135deg, #0ea5e9, #2563eb)" }}
-                  >
-                    <div className="absolute inset-0 bg-white/20 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="z-10 relative">
-                      <circle cx="11" cy="11" r="8" />
-                      <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                    </svg>
-                    <span className="z-10 relative">Research Lead with Ceevee</span>
-                  </button>
-                </div>
-
-                {/* Demarko CTA */}
-                <div className="demarko-cta-card mt-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <div style={{
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      width: 24, height: 24, borderRadius: 6,
-                      background: "linear-gradient(135deg, #f97316, #ef4444, #ec4899)",
-                    }}>
-                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-                        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
-                        <polyline points="22,6 12,13 2,6" />
-                      </svg>
-                    </div>
-                    <span className="text-sm font-bold" style={{ background: "linear-gradient(135deg, #f97316, #ef4444, #ec4899)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Next Step: Demarko</span>
-                  </div>
-                  <p className="text-xs mb-3" style={{ color: "var(--text-muted)" }}>
-                    Send personalized follow-up emails to your researched prospects.
-                  </p>
-                  <button
-                    onClick={() => router.push("/demarko")}
-                    className="group relative flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3.5 text-sm font-bold text-white shadow-lg shadow-orange-500/20 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-orange-500/40 active:translate-y-0 cursor-pointer overflow-hidden"
-                    style={{ background: "linear-gradient(135deg, #f97316, #ef4444, #ec4899)" }}
-                  >
-                    <div className="absolute inset-0 bg-white/20 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="z-10 relative">
-                      <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
-                      <polyline points="22,6 12,13 2,6" />
-                    </svg>
-                    <span className="z-10 relative">Outreach with Demarko</span>
-                  </button>
-                </div>
-
               </div>
             )}
           </div>

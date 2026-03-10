@@ -1,9 +1,6 @@
 import { MongoClient, Db } from "mongodb";
 import dns from "dns";
 
-// Force the Node.js process to use Google DNS servers.
-// This resolves "ECONNREFUSED" or "querySrv" errors often caused by local DNS 
-// failing to resolve MongoDB Atlas SRV records.
 dns.setServers(["8.8.8.8", "8.8.4.4"]);
 
 const MONGODB_URI = process.env.MONGODB_URI as string;

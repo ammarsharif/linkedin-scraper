@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { 
   Search, 
@@ -184,7 +184,13 @@ const LOADING_STEPS = [
   "Finalizing dossier...",
 ];
 
-function LoadingOverlay({ step }: { step: number }) {
+function LoadingOverlay({ step, elapsedSec, liveDetail, onCancel }: { step: number; elapsedSec: number; liveDetail?: string; onCancel?: () => void }) {
+  const formatElapsed = (sec: number) => {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return m > 0 ? `${m}m ${s}s` : `${s}s`;
+  };
+
   return (
     <div className="max-w-md mx-auto mt-16 animate-fade-in">
       <div className="p-8 rounded-2xl border border-white/10 bg-black/40 backdrop-blur-xl text-center">
@@ -201,10 +207,15 @@ function LoadingOverlay({ step }: { step: number }) {
           <Search size={28} />
         </div>
 
-        <h3 className="text-lg font-bold text-white mb-2">Researching Prospect</h3>
-        <p className="text-sm text-gray-400 mb-6">This may take 30-60 seconds</p>
+        <h3 className="text-lg font-bold text-white mb-1">Researching Prospect</h3>
+        <div className="flex items-center justify-center gap-3 mb-5">
+          <span className="text-sm text-gray-400">Elapsed</span>
+          <span className="text-sm font-mono font-bold text-[#0ea5e9] bg-[#0ea5e9]/10 px-2 py-0.5 rounded-md">
+            {formatElapsed(elapsedSec)}
+          </span>
+        </div>
 
-        <div className="space-y-2">
+        <div className="space-y-2 mb-5">
           {LOADING_STEPS.map((label, i) => (
             <div
               key={i}
@@ -223,12 +234,38 @@ function LoadingOverlay({ step }: { step: number }) {
                   <div className="w-1.5 h-1.5 rounded-full bg-gray-600" />
                 )}
               </div>
-              <span className="text-sm" style={{ color: i <= step ? "#e5e7eb" : "#5a5e72" }}>
+              <span className="text-sm text-left flex-1" style={{ color: i <= step ? "#e5e7eb" : "#5a5e72" }}>
                 {label}
               </span>
             </div>
           ))}
         </div>
+
+        {liveDetail && (
+          <p className="text-xs text-[#0ea5e9]/70 mb-4 font-mono truncate">{liveDetail}</p>
+        )}
+
+        {/* Progress bar */}
+        <div className="h-1.5 rounded-full bg-white/5 overflow-hidden ring-1 ring-white/10 mb-5">
+          <div
+            className="h-full rounded-full transition-all duration-700 ease-out relative"
+            style={{
+              width: `${Math.max(5, ((step + 1) / LOADING_STEPS.length) * 100)}%`,
+              background: "linear-gradient(135deg, #0ea5e9, #2563eb)",
+            }}
+          >
+            <div className="absolute inset-0 bg-white/20 animate-pulse"></div>
+          </div>
+        </div>
+
+        {onCancel && (
+          <button
+            onClick={onCancel}
+            className="text-xs text-red-400/70 hover:text-red-400 transition-colors cursor-pointer"
+          >
+            Cancel
+          </button>
+        )}
       </div>
     </div>
   );
@@ -311,16 +348,29 @@ export default function CeeveePage() {
     }
   }, [data]);
 
-  // Loading step animation
+  const [elapsedSec, setElapsedSec] = useState(0);
+  const [liveDetail, setLiveDetail] = useState("");
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Loading step animation — faster intervals since scraping is optimized
   useEffect(() => {
-    if (!loading) return;
+    if (!loading) {
+      setElapsedSec(0);
+      return;
+    }
+    // Start elapsed timer
+    timerRef.current = setInterval(() => setElapsedSec(s => s + 1), 1000);
+    // Advance loading steps
     const interval = setInterval(() => {
       setLoadingStep((prev) => {
         if (prev < LOADING_STEPS.length - 1) return prev + 1;
         return prev;
       });
-    }, 5000);
-    return () => clearInterval(interval);
+    }, 6000);
+    return () => {
+      clearInterval(interval);
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
   }, [loading]);
 
   async function handleAnalyze(e: React.FormEvent) {
@@ -632,7 +682,7 @@ export default function CeeveePage() {
       {/* ── Main ── */}
       <main className="relative z-10 mx-auto max-w-6xl px-6 py-10">
         {loading ? (
-          <LoadingOverlay step={loadingStep} />
+          <LoadingOverlay step={loadingStep} elapsedSec={elapsedSec} liveDetail={liveDetail} />
         ) : !data ? (
           /* ── Input View ── */
           <div className="max-w-2xl mx-auto mt-8 animate-fade-in">

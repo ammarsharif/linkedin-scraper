@@ -1,5 +1,6 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import asyncio
 import json
@@ -7,6 +8,9 @@ import re
 import os
 import sys
 import random
+import time
+import queue
+import threading
 
 if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
@@ -91,13 +95,19 @@ def prettify_vanity(vanity: str) -> str:
     # capitalize
     return name.title().strip() or vanity.title()
 
-def _do_scrape(cookie_string: str, profile_url: str, limit: int) -> dict:
+def _do_scrape(cookie_string: str, profile_url: str, limit: int, progress_queue=None) -> dict:
     import sys
     import asyncio
     
     if sys.platform == 'win32':
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-        
+
+    def emit(stage: str, detail: str, pct: int):
+        """Send a progress event to the queue if available."""
+        if progress_queue:
+            progress_queue.put({"stage": stage, "detail": detail, "pct": pct, "ts": time.time()})
+        print(f"[api][progress] {stage}: {detail} ({pct}%)", file=sys.stderr)
+
     async def async_scrape():
         from urllib.parse import urlparse, urlunparse
         
@@ -121,17 +131,20 @@ def _do_scrape(cookie_string: str, profile_url: str, limit: int) -> dict:
         }
 
         cookies = cookie_string_to_list(cookie_string)
-        print(f"[api] Parsed {len(cookies)} cookies", file=sys.stderr)
+        emit("init", f"Parsed {len(cookies)} cookies", 2)
         print(f"[api] Scraping {p_url}, limit={limit}", file=sys.stderr)
 
         try:
+            emit("browser", "Launching browser", 5)
             async with BrowserManager(headless=True) as browser:
                 await browser.context.add_cookies(cookies)
-                print("[api] Cookies loaded into browser", file=sys.stderr)
+                emit("browser", "Browser ready, cookies loaded", 8)
 
-                await _human_pause(1.0, 3.0)
+                # Tighter initial pause (0.5-1.5s instead of 1.0-3.0s)
+                await _human_pause(0.5, 1.5)
 
                 # ── Step 1: Get the profile ────────────────────────────────────
+                emit("profile", "Scraping profile info", 10)
                 try:
                     person_scraper = PersonScraper(browser.page)
                     person = await person_scraper.scrape(p_url)
@@ -140,19 +153,28 @@ def _do_scrape(cookie_string: str, profile_url: str, limit: int) -> dict:
                     result["profile"]["headline"] = person.job_title or ""
                     result["profile"]["name"] = person.name or prettify_vanity(vanity_name)
                     result["profile"]["location"] = person.location or ""
-                    print(f"[api] Profile scraped: {result['profile']['name']!r}", file=sys.stderr)
+                    emit("profile", f"Profile scraped: {result['profile']['name']}", 25)
                 except Exception as e:
                     print(f"[api] Profile scrape error: {e}", file=sys.stderr)
                     if "Not logged in" in str(e) or "authenticate" in str(e).lower():
                         raise e
                     import traceback
                     traceback.print_exc(file=sys.stderr)
+                    emit("profile", "Profile extraction had errors", 25)
 
                 # ── Step 2: Scrape posts ─────────────────────────────────────────────
+                emit("posts", "Starting posts scrape", 30)
                 try:
                     posts_scraper = PersonPostsScraper(browser.page)
-                    posts = await posts_scraper.scrape(p_url, limit=limit)
-                    print(f"[api] Found {len(posts)} posts", file=sys.stderr)
+
+                    # Create a progress callback for SSE
+                    async def posts_progress(stage, detail, pct):
+                        # Remap pct from 0-100 to 30-90
+                        mapped_pct = 30 + int(pct * 0.6)
+                        emit(stage, detail, mapped_pct)
+
+                    posts = await posts_scraper.scrape(p_url, limit=limit, on_progress=posts_progress)
+                    emit("posts", f"Found {len(posts)} posts", 92)
 
                     # Debug: if no posts, dump page info
                     if len(posts) == 0:
@@ -191,6 +213,7 @@ def _do_scrape(cookie_string: str, profile_url: str, limit: int) -> dict:
             print(f"Top level error in do_scrape: {error_trace}", file=sys.stderr)
             return {"error": str(e), "traceback": error_trace}
 
+        emit("done", f"Complete — {len(result['posts'])} posts", 100)
         return result
 
     return asyncio.run(async_scrape())
@@ -213,7 +236,8 @@ async def run_scrape(request: ScrapeRequest):
             _do_scrape, 
             request.cookieString, 
             request.profileUrl, 
-            request.limit
+            request.limit,
+            None  # no progress_queue for legacy endpoint
         )
         if "error" in result:
              # Just pass the dict as JSON response as it already handles error response
@@ -224,3 +248,58 @@ async def run_scrape(request: ScrapeRequest):
         error_trace = traceback.format_exc()
         print(f"Server executor error: {error_trace}", file=sys.stderr)
         return {"error": str(e), "traceback": error_trace}
+
+
+# ── SSE streaming endpoint ──────────────────────────────────────────────────
+@app.post("/scrape-stream")
+async def run_scrape_stream(request: ScrapeRequest):
+    """Stream progress events as SSE (Server-Sent Events) with the final result."""
+    if not request.cookieString:
+        raise HTTPException(status_code=400, detail="No cookieString provided")
+    if not request.profileUrl:
+        raise HTTPException(status_code=400, detail="No profileUrl provided")
+
+    progress_q = queue.Queue()
+
+    def run_in_thread():
+        return _do_scrape(request.cookieString, request.profileUrl, request.limit, progress_q)
+
+    # Start scrape in background thread
+    future = executor.submit(run_in_thread)
+
+    async def event_generator():
+        """Yield SSE events as they come from the progress queue."""
+        while not future.done():
+            # Drain queue
+            while True:
+                try:
+                    evt = progress_q.get_nowait()
+                    yield f"data: {json.dumps(evt)}\n\n"
+                except queue.Empty:
+                    break
+            await asyncio.sleep(0.3)  # poll every 300ms
+
+        # Drain remaining events
+        while True:
+            try:
+                evt = progress_q.get_nowait()
+                yield f"data: {json.dumps(evt)}\n\n"
+            except queue.Empty:
+                break
+
+        # Send final result
+        try:
+            result = future.result()
+            yield f"data: {json.dumps({'stage': 'result', 'data': result, 'pct': 100})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'stage': 'error', 'detail': str(e), 'pct': 100})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
