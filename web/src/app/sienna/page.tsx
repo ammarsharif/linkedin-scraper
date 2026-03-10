@@ -1506,14 +1506,13 @@ function SiennaPageInner() {
                 style={{ color: "#f9fafb" }}
               >
                 <Edit size={22} style={{ color: "#c96ef5" }} />
-                <Edit size={22} style={{ color: "#c96ef5" }} />
                 Dina — Generated Caption
               </h2>
               <button
                 onClick={() => { setDinaModalHook(null); setDinaCaption(""); setDinaError(""); }}
                 className="text-gray-400 hover:text-white transition-colors cursor-pointer"
               >
-                <Download size={14} />
+                <X size={20} />
               </button>
             </div>
 

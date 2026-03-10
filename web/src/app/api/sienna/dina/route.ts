@@ -100,10 +100,10 @@ ABOVE THE FOLD (first 2-3 lines — what shows BEFORE "...see more"):
 - Reader MUST feel compelled to click "see more"
 
 BELOW THE FOLD (the payoff):
-- Deliver the promised value in 3-5 punchy paragraphs
-- Max 1-2 sentences per paragraph
-- Use line breaks between every thought
-- Build momentum — each line should pull them to the next
+- Deliver the promised value in 3-4 professional, well-structured paragraphs
+- DO NOT use the "broetry" style of one sentence per line
+- Each paragraph should contain 2-4 cohesive sentences
+- Group related thoughts together logically
 - Include 1 specific, concrete insight (a number, a tactic, a real example)
 
 CLOSING (last 1-2 lines):
@@ -113,11 +113,11 @@ CLOSING (last 1-2 lines):
 
 CRITICAL RULES:
 - Output ONLY the final LinkedIn post. No labels, no headers, no meta text.
-- Total length: 100-180 words
+- Total length: 100-200 words
 - NO emojis
 - NO AI jargon: avoid "Unlock", "Delve", "Elevate", "Testament", "Landscape", "Navigate", "Leverage", "Harness", "In today's fast-paced world"
-- Write like a real human — conversational, direct, confident
-- Every paragraph should earn the next scroll`;
+- Write like a real human — conversational, direct, professional
+- Avoid single-sentence lines unless for strong emphasis. Most text should be in standard paragraphs.`;
 
     const userPrompt = `Write a LinkedIn caption for ${creatorName}.
 
@@ -142,7 +142,7 @@ CONTENT:
 
 STRUCTURE YOUR POST EXACTLY LIKE THIS:
 1. Lines 1-3: The hook (above the fold — creates "see more" click)
-2. Lines 4-10: The value (below the fold — deliver the insight)
+2. Middle section: The value (below the fold — deliver the insight in cohesive paragraphs, not single lines)
 3. Last line: A comment-driving question or bold closer
 
 Write the complete post now. Only the post text, nothing else.`;
