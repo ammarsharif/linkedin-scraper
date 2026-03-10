@@ -22,6 +22,8 @@ import {
   Edit 
 , Headphones, UserCheck} from "lucide-react";
 
+import { BotSwitcher } from "@/components/BotSwitcher";
+
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 interface Profile {
@@ -749,112 +751,7 @@ function SiennaPageInner() {
 
             {/* Navigation */}
             <div style={{ width: 1, height: 24, background: "rgba(255,255,255,0.08)", margin: "0 4px" }} />
-            <nav className="flex items-center gap-1">
-              <button
-                onClick={() => router.push("/ceevee")}
-                className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border"
-                style={{
-                  background: "rgba(0,0,0,0.4)",
-                  borderColor: "rgba(14,165,233,0.3)",
-                  color: "#0ea5e9",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "rgba(14,165,233,0.08)";
-                  e.currentTarget.style.borderColor = "rgba(14,165,233,0.5)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "rgba(0,0,0,0.4)";
-                  e.currentTarget.style.borderColor = "rgba(14,165,233,0.3)";
-                }}
-              >
-                  <Search size={13} strokeWidth={2.5} />
-                <span>Ceevee</span>
-              </button>
-
-              <button
-                onClick={() => router.push("/demarko")}
-                className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border"
-                style={{
-                  background: "rgba(0,0,0,0.4)",
-                  borderColor: "rgba(249,115,22,0.3)",
-                  color: "#f97316",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "rgba(249,115,22,0.08)";
-                  e.currentTarget.style.borderColor = "rgba(249,115,22,0.5)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "rgba(0,0,0,0.4)";
-                  e.currentTarget.style.borderColor = "rgba(249,115,22,0.3)";
-                }}
-              >
-                  <Mail size={13} strokeWidth={2.5} />
-                <span>Demarko</span>
-              </button>
-
-              <button
-                onClick={() => router.push("/inti")}
-                className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border"
-                style={{
-                  background: "rgba(0,0,0,0.4)",
-                  borderColor: "rgba(99,102,241,0.3)",
-                  color: "#818cf8",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "rgba(99,102,241,0.08)";
-                  e.currentTarget.style.borderColor = "rgba(99,102,241,0.5)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "rgba(0,0,0,0.4)";
-                  e.currentTarget.style.borderColor = "rgba(99,102,241,0.3)";
-                }}
-              >
-                  <MessageSquare size={13} strokeWidth={2.5} />
-                <span>Inti</span>
-              </button>
-            
-              <button
-                onClick={() => router.push("/cindy")}
-                className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border"
-                style={{
-                  background: "rgba(0,0,0,0.4)",
-                  borderColor: "rgba(16,185,129,0.3)",
-                  color: "#10b981",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "rgba(16,185,129,0.08)";
-                  e.currentTarget.style.borderColor = "rgba(16,185,129,0.5)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "rgba(0,0,0,0.4)";
-                  e.currentTarget.style.borderColor = "rgba(16,185,129,0.3)";
-                }}
-              >
-                  <Headphones size={13} strokeWidth={2.5} />
-                <span>Cindy</span>
-              </button>
-            
-              <button
-                onClick={() => router.push("/cara")}
-                className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border"
-                style={{
-                  background: "rgba(0,0,0,0.4)",
-                  borderColor: "rgba(244,63,94,0.3)",
-                  color: "#f43f5e",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "rgba(244,63,94,0.08)";
-                  e.currentTarget.style.borderColor = "rgba(244,63,94,0.5)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "rgba(0,0,0,0.4)";
-                  e.currentTarget.style.borderColor = "rgba(244,63,94,0.3)";
-                }}
-              >
-                  <UserCheck size={13} strokeWidth={2.5} />
-                <span>Cara</span>
-              </button>
-            </nav>
+            <BotSwitcher currentBotId="sienna" />
           </div>
 
           {/* Right — status */}

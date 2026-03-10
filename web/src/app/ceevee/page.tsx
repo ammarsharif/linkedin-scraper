@@ -12,7 +12,9 @@ import {
   Zap, 
   RotateCcw, 
   FileText 
-, Headphones, UserCheck} from "lucide-react";
+} from "lucide-react";
+
+import { BotSwitcher } from "@/components/BotSwitcher";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -540,132 +542,19 @@ export default function CeeveePage() {
       >
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-3.5">
           <div className="flex items-center gap-4">
-            <button
-              onClick={() => router.push("/scraper")}
-              className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border"
-              style={{
-                background: "rgba(0,0,0,0.4)",
-                borderColor: "rgba(0,180,216,0.3)",
-                color: "#00b4d8",
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = "rgba(0,180,216,0.08)";
-                e.currentTarget.style.borderColor = "rgba(0,180,216,0.5)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = "rgba(0,0,0,0.4)";
-                e.currentTarget.style.borderColor = "rgba(0,180,216,0.3)";
-              }}
-            >
-              <Linkedin size={13} strokeWidth={2.5} />
-              <span>Scraper</span>
-            </button>
-            <div style={{ width: 1, height: 20, background: "rgba(255,255,255,0.08)" }} />
-            <div className="flex items-center gap-2.5">
-              <div
-                className="flex items-center justify-center rounded-lg shadow-lg"
-                style={{
-                  width: 32,
-                  height: 32,
-                  background: "linear-gradient(135deg, #0284c7, #00b4d8)",
-                }}
-              >
-                <Search size={16} stroke="white" />
-              </div>
-              <div>
-                <p className="text-sm font-bold" style={{ color: "#e5e7eb", lineHeight: 1.2 }}>Ceevee</p>
-                <p className="text-[11px]" style={{ color: "#4b5268" }}>Prospect Research Bot</p>
-              </div>
+            <div className="flex items-center justify-center rounded-lg shadow-lg" style={{ width: 32, height: 32, background: "linear-gradient(135deg, #0284c7, #00b4d8)" }}>
+              <Search size={16} stroke="white" />
             </div>
+            <div>
+              <p className="text-sm font-bold" style={{ color: "#e5e7eb", lineHeight: 1.2 }}>Ceevee</p>
+              <p className="text-[11px]" style={{ color: "#4b5268" }}>Prospect Research Bot</p>
+            </div>
+            
+            <div style={{ width: 1, height: 24, background: "rgba(255,255,255,0.08)", margin: "0 4px" }} />
+            <BotSwitcher currentBotId="ceevee" />
           </div>
 
           <div className="flex items-center gap-3">
-            {data && (
-              <button
-                className="flex items-center gap-2 rounded-xl px-3.5 py-1.5 text-xs font-bold transition-all cursor-default border"
-                style={{
-                  background: "rgba(14,165,233,0.1)",
-                  borderColor: "rgba(14,165,233,0.4)",
-                  color: "#0ea5e9",
-                }}
-              >
-                  <Search size={13} strokeWidth={2.5} />
-                <span>Ceevee</span>
-              </button>
-            )}
-            {data && (
-              <button
-                onClick={() => router.push("/demarko")}
-                className="flex items-center gap-2 rounded-xl px-3.5 py-1.5 text-xs font-bold transition-all cursor-pointer border"
-                style={{
-                  background: "rgba(0,0,0,0.4)",
-                  borderColor: "rgba(249,115,22,0.3)",
-                  color: "#f97316",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "rgba(249,115,22,0.08)";
-                  e.currentTarget.style.borderColor = "rgba(249,115,22,0.5)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "rgba(0,0,0,0.4)";
-                  e.currentTarget.style.borderColor = "rgba(249,115,22,0.3)";
-                }}
-              >
-                  <Mail size={13} strokeWidth={2.5} />
-                <span>Demarko</span>
-              </button>
-            )}
-            {data && (
-              <button
-                onClick={() => router.push("/inti")}
-                className="flex items-center gap-2 rounded-xl px-3.5 py-1.5 text-xs font-bold transition-all cursor-pointer border"
-                style={{
-                  background: "rgba(0,0,0,0.4)",
-                  borderColor: "rgba(99,102,241,0.3)",
-                  color: "#818cf8",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "rgba(99,102,241,0.08)";
-                  e.currentTarget.style.borderColor = "rgba(99,102,241,0.5)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "rgba(0,0,0,0.4)";
-                  e.currentTarget.style.borderColor = "rgba(99,102,241,0.3)";
-                }}
-              >
-                  <MessageSquare size={13} strokeWidth={2.5} />
-                <span>Inti</span>
-              </button>
-            )}
-            {data && (
-              <button
-                onClick={() => {
-                  const sPayload = localStorage.getItem("sienna_payload");
-                  if (sPayload) {
-                    router.push("/sienna");
-                  } else {
-                    showToast("No scraper data found for Sienna", "error");
-                  }
-                }}
-                className="flex items-center gap-2 rounded-xl px-3.5 py-1.5 text-xs font-bold transition-all cursor-pointer border"
-                style={{
-                  background: "rgba(0,0,0,0.4)",
-                  borderColor: "rgba(201,110,245,0.3)",
-                  color: "#c96ef5",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "rgba(201,110,245,0.08)";
-                  e.currentTarget.style.borderColor = "rgba(201,110,245,0.5)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "rgba(0,0,0,0.4)";
-                  e.currentTarget.style.borderColor = "rgba(201,110,245,0.3)";
-                }}
-              >
-                  <Zap size={13} strokeWidth={2.5} />
-                <span>Sienna</span>
-              </button>
-            )}
             {data && (
               <button
                 onClick={handleReset}
