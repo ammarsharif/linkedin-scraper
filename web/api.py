@@ -11,6 +11,8 @@ import random
 import time
 import queue
 import threading
+import subprocess
+import signal
 
 if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
@@ -303,3 +305,94 @@ async def run_scrape_stream(request: ScrapeRequest):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# ── LinkedIn Message Watcher Management ─────────────────────────────────────
+# Manages the linkedin_watcher.py subprocess from the /cindy page
+
+WATCHER_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cindy_extension")
+WATCHER_SCRIPT = os.path.join(WATCHER_DIR, "linkedin_watcher.py")
+WATCHER_LOG = os.path.join(WATCHER_DIR, "watcher.log")
+
+_watcher_process: subprocess.Popen | None = None
+
+
+def _is_watcher_running() -> bool:
+    global _watcher_process
+    if _watcher_process is None:
+        return False
+    poll = _watcher_process.poll()
+    if poll is not None:
+        _watcher_process = None
+        return False
+    return True
+
+
+@app.get("/watcher/status")
+async def watcher_status():
+    running = _is_watcher_running()
+    pid = _watcher_process.pid if _watcher_process else None
+
+    # Read last 20 lines of watcher log
+    log_lines = []
+    try:
+        if os.path.exists(WATCHER_LOG):
+            with open(WATCHER_LOG, "r", encoding="utf-8") as f:
+                all_lines = f.readlines()
+                log_lines = [l.rstrip() for l in all_lines[-20:]]
+    except Exception:
+        pass
+
+    return {
+        "running": running,
+        "pid": pid,
+        "logLines": log_lines,
+    }
+
+
+@app.post("/watcher/start")
+async def watcher_start():
+    global _watcher_process
+
+    if _is_watcher_running():
+        return {"success": True, "message": "Watcher is already running", "pid": _watcher_process.pid}
+
+    if not os.path.exists(WATCHER_SCRIPT):
+        raise HTTPException(status_code=404, detail=f"Watcher script not found at {WATCHER_SCRIPT}")
+
+    try:
+        _watcher_process = subprocess.Popen(
+            [sys.executable, WATCHER_SCRIPT],
+            cwd=WATCHER_DIR,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+        )
+        print(f"[watcher] Started watcher process, PID={_watcher_process.pid}", file=sys.stderr)
+        return {"success": True, "message": "Watcher started", "pid": _watcher_process.pid}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start watcher: {e}")
+
+
+@app.post("/watcher/stop")
+async def watcher_stop():
+    global _watcher_process
+
+    if not _is_watcher_running():
+        return {"success": True, "message": "Watcher is not running"}
+
+    try:
+        pid = _watcher_process.pid
+        _watcher_process.terminate()
+        _watcher_process.wait(timeout=5)
+        _watcher_process = None
+        print(f"[watcher] Stopped watcher process, PID={pid}", file=sys.stderr)
+        return {"success": True, "message": f"Watcher stopped (PID {pid})"}
+    except subprocess.TimeoutExpired:
+        _watcher_process.kill()
+        _watcher_process = None
+        return {"success": True, "message": "Watcher force-killed"}
+    except Exception as e:
+        _watcher_process = None
+        raise HTTPException(status_code=500, detail=f"Failed to stop watcher: {e}")
+

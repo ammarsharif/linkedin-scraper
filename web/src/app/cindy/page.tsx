@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { 
   Linkedin, 
@@ -12,8 +12,14 @@ import {
   Headphones,
   CheckCircle2,
   Copy,
-  ChevronLeft
-, UserCheck} from "lucide-react";
+  ChevronLeft,
+  UserCheck,
+  Radio,
+  Power,
+  Terminal,
+  ChevronDown,
+  ChevronUp
+} from "lucide-react";
 
 import { BotSwitcher } from "@/components/BotSwitcher";
 
@@ -50,6 +56,14 @@ export default function CindyPage() {
   const [generating, setGenerating] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
+  // Watcher state
+  const [watcherRunning, setWatcherRunning] = useState(false);
+  const [watcherPid, setWatcherPid] = useState<number | null>(null);
+  const [watcherLogs, setWatcherLogs] = useState<string[]>([]);
+  const [watcherLoading, setWatcherLoading] = useState(false);
+  const [showLogs, setShowLogs] = useState(false);
+  const logEndRef = useRef<HTMLDivElement>(null);
+
   const [isTimerRunning, setIsTimerRunning] = useState(false);
   const [timeLeft, setTimeLeft] = useState(120); // 2 minutes (120 seconds)
 
@@ -64,6 +78,60 @@ export default function CindyPage() {
       .catch(() => router.push("/"))
       .finally(() => setChecking(false));
   }, [router]);
+
+  // Poll watcher status every 5 seconds
+  const fetchWatcherStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/cindy/watcher");
+      const data = await res.json();
+      setWatcherRunning(data.running ?? false);
+      setWatcherPid(data.pid ?? null);
+      if (data.logLines) setWatcherLogs(data.logLines);
+    } catch {
+      // silently fail
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!checking) {
+      fetchWatcherStatus();
+      const interval = setInterval(fetchWatcherStatus, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [checking, fetchWatcherStatus]);
+
+  useEffect(() => {
+    if (showLogs && logEndRef.current) {
+      logEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [watcherLogs, showLogs]);
+
+  const toggleWatcher = async () => {
+    setWatcherLoading(true);
+    const action = watcherRunning ? "stop" : "start";
+    try {
+      const res = await fetch("/api/cindy/watcher", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(
+          action === "start" ? "Message watcher started!" : "Message watcher stopped.",
+          "success"
+        );
+        // Refresh status
+        setTimeout(fetchWatcherStatus, 500);
+      } else {
+        showToast(data.error || `Failed to ${action} watcher`, "error");
+      }
+    } catch {
+      showToast(`Network error — could not ${action} watcher`, "error");
+    } finally {
+      setWatcherLoading(false);
+    }
+  };
 
   const loadProfiles = useCallback(async () => {
     setLoading(true);
@@ -208,6 +276,45 @@ export default function CindyPage() {
             <BotSwitcher currentBotId="cindy" />
           </div>
           <div className="flex items-center gap-3">
+            {/* Watcher Status Pill */}
+            <button
+              onClick={toggleWatcher}
+              disabled={watcherLoading}
+              className="flex items-center gap-2.5 text-sm px-4 py-2 rounded-xl font-semibold transition-all cursor-pointer border disabled:opacity-60"
+              style={{
+                background: watcherRunning ? "rgba(16,185,129,0.1)" : "rgba(239,68,68,0.08)",
+                borderColor: watcherRunning ? "rgba(16,185,129,0.3)" : "rgba(239,68,68,0.2)",
+                color: watcherRunning ? "#10b981" : "#ef4444",
+              }}
+              title={watcherRunning ? "Click to stop watcher" : "Click to start watcher"}
+            >
+              {watcherLoading ? (
+                <RefreshCw size={14} className="animate-spin" />
+              ) : (
+                <>
+                  <span className="relative flex h-2.5 w-2.5">
+                    {watcherRunning && <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" style={{ background: "#10b981" }} />}
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5" style={{ background: watcherRunning ? "#10b981" : "#ef4444" }} />
+                  </span>
+                  <Power size={14} />
+                </>
+              )}
+              <span>{watcherRunning ? "Watcher On" : "Watcher Off"}</span>
+            </button>
+
+            {/* Log Viewer Toggle */}
+            <button
+              onClick={() => setShowLogs(!showLogs)}
+              className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400 hover:text-gray-200 transition-all border border-white/10 cursor-pointer"
+              title="Toggle watcher logs"
+            >
+              <Terminal size={13} />
+              <span>Logs</span>
+              {showLogs ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+            </button>
+
+            <div style={{ width: 1, height: 20, background: "rgba(255,255,255,0.08)" }} />
+
             <button onClick={loadProfiles} disabled={loading} className="flex items-center gap-2 text-sm px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 font-medium transition-all border border-white/10 cursor-pointer disabled:opacity-50">
               <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
               <span>Refresh</span>
@@ -215,6 +322,36 @@ export default function CindyPage() {
           </div>
         </div>
       </header>
+
+      {/* WATCHER LOG PANEL */}
+      {showLogs && (
+        <div className="relative z-20 mx-auto max-w-7xl px-6 animate-fade-in">
+          <div className="mt-2 rounded-2xl border overflow-hidden" style={{ background: "rgba(0,0,0,0.5)", borderColor: "rgba(255,255,255,0.08)", backdropFilter: "blur(16px)" }}>
+            <div className="flex items-center justify-between px-4 py-2.5 border-b" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+              <div className="flex items-center gap-2">
+                <Terminal size={14} className="text-gray-500" />
+                <span className="text-xs font-semibold text-gray-400">Watcher Logs</span>
+                {watcherPid && <span className="text-[10px] text-gray-600 font-mono">PID {watcherPid}</span>}
+              </div>
+              <button onClick={fetchWatcherStatus} className="text-xs text-gray-500 hover:text-gray-300 cursor-pointer transition-colors flex items-center gap-1">
+                <RefreshCw size={11} /> Refresh
+              </button>
+            </div>
+            <div className="px-4 py-3 max-h-[200px] overflow-y-auto font-mono text-xs leading-relaxed" style={{ color: "#8b949e" }}>
+              {watcherLogs.length === 0 ? (
+                <p className="text-gray-600 italic">No logs yet. Start the watcher to see activity.</p>
+              ) : (
+                watcherLogs.map((line, i) => (
+                  <div key={i} className="py-0.5" style={{ color: line.includes("ERROR") ? "#f87171" : line.includes("✅") ? "#34d399" : line.includes("WARNING") ? "#fbbf24" : "#8b949e" }}>
+                    {line}
+                  </div>
+                ))
+              )}
+              <div ref={logEndRef} />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* MAIN LAYOUT */}
       <main className="relative z-10 mx-auto max-w-7xl px-6 py-8">
