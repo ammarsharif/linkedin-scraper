@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { BotSwitcher } from "@/components/BotSwitcher";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { 
   Linkedin, 
   Search, 
@@ -110,6 +111,7 @@ export default function DemarkoPage() {
   const [sending, setSending] = useState(false);
   const [generatingEmail, setGeneratingEmail] = useState(false);
   const [showFullInsights, setShowFullInsights] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   // History modal
   const [viewingHistory, setViewingHistory] = useState<StoredProfile | null>(
@@ -360,7 +362,6 @@ export default function DemarkoPage() {
   }
 
   async function handleDeleteProfile(profileId: string) {
-    if (!confirm("Are you sure you want to delete this profile?")) return;
 
     try {
       const res = await fetch("/api/demarko", {
@@ -952,7 +953,7 @@ export default function DemarkoPage() {
 
                       {/* Delete Button */}
                       <button
-                        onClick={() => handleDeleteProfile(profile._id)}
+                        onClick={() => setConfirmDeleteId(profile._id)}
                         className="flex items-center justify-center w-8 h-8 rounded-lg transition-all cursor-pointer text-gray-600 hover:text-red-500 hover:bg-red-500/10 border border-transparent hover:border-red-500/20"
                         title="Delete profile"
                       >
@@ -966,6 +967,21 @@ export default function DemarkoPage() {
           </div>
         )}
       </main>
+
+      {/* ── Confirm Delete Dialog ── */}
+      <ConfirmDialog
+        isOpen={!!confirmDeleteId}
+        title="Delete Prospect"
+        message="Are you sure you want to delete this prospect? This will remove their profile and all email history from the Outreach Hub. This action cannot be undone."
+        confirmLabel="Delete Prospect"
+        cancelLabel="Keep Prospect"
+        onConfirm={() => {
+          if (confirmDeleteId) handleDeleteProfile(confirmDeleteId);
+          setConfirmDeleteId(null);
+        }}
+        onCancel={() => setConfirmDeleteId(null)}
+        variant="danger"
+      />
 
       {/* ── Compose Email Modal ── */}
       {composing && (
