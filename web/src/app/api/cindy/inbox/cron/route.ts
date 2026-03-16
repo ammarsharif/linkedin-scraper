@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { extractJsessionId } from "@/lib/linkedin";
+import { getDatabase } from "@/lib/mongodb";
 import { randomUUID, randomBytes } from "crypto";
 
 /**
@@ -284,6 +285,29 @@ async function cronTick(cookieString: string) {
           processedMessageIds.add(msgId);
           newMessages++;
           addCronLog(`✅ Replied to ${senderName}: "${replyText.slice(0, 50)}..."`, "success");
+
+          // Log conversation to MongoDB for Cara
+          try {
+            const db = await getDatabase();
+            await db.collection("conversation_logs").updateOne(
+              { conversationUrn },
+              {
+                $push: {
+                  messages: {
+                    $each: [
+                      { role: "prospect", text: messageText, timestamp: new Date().toISOString(), source: "linkedin_inbox" },
+                      { role: "cindy", text: replyText, timestamp: new Date().toISOString(), source: "cindy_cron" },
+                    ],
+                  },
+                } as any,
+                $set: { senderName, senderUrn, lastActivity: new Date().toISOString() },
+                $setOnInsert: { createdAt: new Date().toISOString() },
+              },
+              { upsert: true }
+            );
+          } catch (logErr) {
+            addCronLog(`Failed to log conversation for ${senderName}`, "warning");
+          }
         } else {
           addCronLog(`Failed to send reply to ${senderName}: ${sendRes.status}`, "error");
         }

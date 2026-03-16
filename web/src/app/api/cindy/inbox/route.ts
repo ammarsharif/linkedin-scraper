@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { extractJsessionId, parseCookieString } from "@/lib/linkedin";
+import { getDatabase } from "@/lib/mongodb";
 import { randomUUID, randomBytes } from "crypto";
 
 /**
@@ -367,6 +368,29 @@ export async function POST(req: NextRequest) {
         sent: false,
         error: `Failed to send: ${sendRes.status}`,
       });
+    }
+
+    // ── Step 3: Log conversation to MongoDB for Cara ──────────
+    try {
+      const db = await getDatabase();
+      await db.collection("conversation_logs").updateOne(
+        { conversationUrn },
+        {
+          $push: {
+            messages: {
+              $each: [
+                { role: "prospect", text: messageText, timestamp: new Date().toISOString(), source: "linkedin_inbox" },
+                { role: "cindy", text: replyText, timestamp: new Date().toISOString(), source: "cindy_auto" },
+              ],
+            },
+          } as any,
+          $set: { senderName: senderName || "Unknown", senderUrn: "", lastActivity: new Date().toISOString() },
+          $setOnInsert: { createdAt: new Date().toISOString() },
+        },
+        { upsert: true }
+      );
+    } catch (logErr) {
+      console.error("[cindy-inbox] Failed to log conversation:", logErr);
     }
 
     return NextResponse.json({

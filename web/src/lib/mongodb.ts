@@ -76,3 +76,23 @@ export interface EmailRecord {
   status: "sent" | "failed";
   errorMessage?: string;
 }
+
+// ── Conversation Logs (Cindy ↔ Cara integration) ─────────────────────────
+
+export interface ChatMessage {
+  role: "prospect" | "cindy" | "human_rep";
+  text: string;
+  timestamp: string;
+  source: "linkedin_inbox" | "cindy_auto" | "cindy_cron" | "manual";
+}
+
+export interface ConversationLog {
+  _id?: string;
+  conversationUrn: string;
+  senderUrn: string;
+  senderName: string;
+  profileId?: string;
+  messages: ChatMessage[];
+  lastActivity: string;
+  createdAt: string;
+}
