@@ -12,8 +12,10 @@ import {
   UserCheck,
   Share2,
   ChevronDown,
-  LayoutGrid
+  LayoutGrid,
+  AlertTriangle
 } from "lucide-react";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 export const BOTS = [
   { id: "scraper", name: "Scraper", desc: "LinkedIn Profile Data", path: "/scraper", icon: Linkedin, color: "#00b4d8", bg: "rgba(0,180,216,0.1)" },
@@ -30,6 +32,7 @@ export function BotSwitcher({ currentBotId }: { currentBotId: string }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [showAlert, setShowAlert] = useState<{ title: string, message: string } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -94,7 +97,10 @@ export function BotSwitcher({ currentBotId }: { currentBotId: string }) {
                 key={bot.id}
                 onClick={() => {
                   if (bot.requiredLocal && !localStorage.getItem(bot.requiredLocal)) {
-                    alert(`This bot requires data from a previous step. Please use the Scraper first.`);
+                    setShowAlert({
+                      title: "Missing Prerequisites",
+                      message: `The ${bot.name} bot requires data from a previous step. Please use the Scraper first.`
+                    });
                     return;
                   }
                   setOpen(false);
@@ -124,6 +130,18 @@ export function BotSwitcher({ currentBotId }: { currentBotId: string }) {
             ))}
           </div>
         </div>
+      )}
+      {showAlert && (
+        <ConfirmDialog
+          isOpen={!!showAlert}
+          title={showAlert.title}
+          message={showAlert.message}
+          confirmLabel="I understand"
+          onConfirm={() => setShowAlert(null)}
+          onCancel={() => setShowAlert(null)}
+          variant="warning"
+          showCancel={false}
+        />
       )}
     </div>
   );

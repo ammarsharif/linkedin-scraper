@@ -1,6 +1,7 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { AlertTriangle, X } from "lucide-react";
 
 interface ConfirmDialogProps {
@@ -12,6 +13,8 @@ interface ConfirmDialogProps {
   onConfirm: () => void;
   onCancel: () => void;
   variant?: "danger" | "warning" | "info";
+  showCancel?: boolean;
+  icon?: React.ReactNode;
 }
 
 export function ConfirmDialog({
@@ -23,8 +26,22 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
   variant = "danger",
+  showCancel = true,
+  icon,
 }: ConfirmDialogProps) {
-  if (!isOpen) return null;
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+    if (isOpen) {
+      document.body.style.overflow = "hidden";
+    }
+    return () => {
+      document.body.style.overflow = "unset";
+    };
+  }, [isOpen]);
+
+  if (!isOpen || !mounted) return null;
 
   const themes = {
     danger: {
@@ -52,9 +69,9 @@ export function ConfirmDialog({
 
   const theme = themes[variant];
 
-  return (
+  const dialog = (
     <div 
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in"
+      className="fixed inset-0 z-[1000] flex items-center justify-center p-4 animate-fade-in"
       style={{ background: "rgba(0,0,0,0.8)", backdropFilter: "blur(8px)" }}
     >
       <div 
@@ -67,7 +84,7 @@ export function ConfirmDialog({
               className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0 border"
               style={{ background: theme.bg, borderColor: theme.border }}
             >
-              {theme.icon}
+              {icon || theme.icon}
             </div>
             <div>
               <h3 className="text-lg font-bold text-white">{title}</h3>
@@ -83,15 +100,17 @@ export function ConfirmDialog({
         </div>
 
         <div className="flex items-center gap-3 mt-8">
-          <button 
-            onClick={onCancel}
-            className="flex-1 py-3 rounded-xl text-sm font-bold text-gray-400 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white transition-all cursor-pointer"
-          >
-            {cancelLabel}
-          </button>
+          {showCancel && (
+            <button 
+              onClick={onCancel}
+              className="flex-1 py-3 rounded-xl text-sm font-bold text-gray-400 bg-white/5 border border-white/10 hover:bg-white/10 hover:text-white transition-all cursor-pointer"
+            >
+              {cancelLabel}
+            </button>
+          )}
           <button 
             onClick={onConfirm}
-            className="flex-1 py-3 rounded-xl text-sm font-bold text-white transition-all cursor-pointer shadow-lg"
+            className={`${showCancel ? "flex-1" : "w-full"} py-3 rounded-xl text-sm font-bold text-white transition-all cursor-pointer shadow-lg`}
             style={{ 
               background: theme.button,
               boxShadow: `0 4px 14px ${theme.shadow}`
@@ -103,4 +122,6 @@ export function ConfirmDialog({
       </div>
     </div>
   );
+
+  return createPortal(dialog, document.body);
 }
