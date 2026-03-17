@@ -240,7 +240,7 @@ ${commentsSummary || "No comments available"}
 Generate a complete, detailed persona analysis. Every section must be thoroughly filled with specific, evidence-backed insights. This persona will be used to simulate realistic conversations with this person.`;
 
   const completion = await openai.chat.completions.create({
-    model: "gpt-4o",
+    model: "gpt-4o-mini",
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt },

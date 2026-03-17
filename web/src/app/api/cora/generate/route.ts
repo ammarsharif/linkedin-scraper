@@ -67,7 +67,7 @@ Return exactly this JSON format:
 }`;
 
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o",
+      model: "gpt-4o-mini",
       messages: [{ role: "system", content: prompt }],
       response_format: { type: "json_object" },
       temperature: 0.7,

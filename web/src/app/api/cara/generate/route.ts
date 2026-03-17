@@ -179,7 +179,7 @@ export async function POST(req: NextRequest) {
 
       const prompt = buildManualPrompt(profile, salesScript);
       const completion = await openai.chat.completions.create({
-        model: "gpt-4o",
+        model: "gpt-4o-mini",
         messages: [{ role: "system", content: prompt }],
         response_format: { type: "json_object" },
         temperature: 0.8,
@@ -209,7 +209,7 @@ export async function POST(req: NextRequest) {
 
       const prompt = buildChatAwarePrompt(profile, salesScript, chatHistory || []);
       const completion = await openai.chat.completions.create({
-        model: "gpt-4o",
+        model: "gpt-4o-mini",
         messages: [{ role: "system", content: prompt }],
         response_format: { type: "json_object" },
         temperature: 0.8,
@@ -233,7 +233,7 @@ export async function POST(req: NextRequest) {
     if (resolvedMode === "script-improver") {
       const prompt = buildScriptImproverPrompt(profile, chatHistory || []);
       const completion = await openai.chat.completions.create({
-        model: "gpt-4o",
+        model: "gpt-4o-mini",
         messages: [{ role: "system", content: prompt }],
         response_format: { type: "json_object" },
         temperature: 0.8,
