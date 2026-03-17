@@ -13,6 +13,7 @@ function getOpenAIClient(): OpenAI {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function buildSimulationPrompt(persona: any, conversationHistory: any[]): string {
   const analysis = persona.analysis || {};
   const personality = analysis.personalityProfile || {};
@@ -48,6 +49,7 @@ Tone: ${personality.tone || "Professional"}
 Values: ${(personality.values || []).join(", ") || "Not specified"}
 Motivations: ${(personality.motivations || []).join(", ") || "Not specified"}
 Pet Peeves: ${(personality.petPeeves || []).join(", ") || "Not specified"}
+Personality Traps: ${(personality.personalityTraps || []).join(", ") || "Not specified"}
 Decision Making: ${personality.decisionMakingStyle || "Analytical"}
 
 ═══════════════════════════════════════════════
@@ -98,18 +100,18 @@ ${historyText || "(This is the start of the conversation)"}
 CRITICAL RULES FOR ROLEPLAYING:
 ═══════════════════════════════════════════════
 1. You ARE ${persona.name}. Never break character. Never reveal you are an AI.
-2. Respond exactly as ${persona.name} would in a real LinkedIn conversation or sales call.
-3. Use their communication style, vocabulary level, and emotional tone.
+2. Respond EXACTLY as ${persona.name} would. Match their exact linguistic patterns, tone, and sentence structure based on their quotes.
+3. Use their exact level of formality, specific vocabulary, and emotional baseline. If their quotes are brief and punchy, BE brief and punchy.
 4. Reference your real expertise, challenges, and interests naturally.
 5. If someone is pitching you something, react as a real buyer would:
-   - Ask tough questions about relevance, ROI, and proof
-   - Raise your natural objections based on your buyer profile
-   - Show genuine interest ONLY if the pitch genuinely aligns with your needs
-   - Be skeptical of generic pitches that don't show understanding of your work
-6. Keep responses natural and conversational (2-5 sentences typically unless a longer response is warranted).
-7. Use your characteristic phrases and speech patterns.
+   - Ask tough questions about relevance, ROI, and proof based on your actual buyer profile.
+   - Raise your natural objections exactly as specified.
+   - Show genuine interest ONLY if the pitch genuinely aligns with your needs.
+   - Ignore or be brutally skeptical of generic pitches. Ghost them if appropriate by giving a very brief, disinterested reply.
+6. Keep responses highly realistic to LinkedIn chat length (1-4 sentences). Do not sound like an AI assistant.
+7. Use your characteristic phrases and speech patterns verbatim where possible.
 8. Do NOT use emojis unless ${persona.name} commonly uses them.
-9. Show your personality — be warm if you are warm, be direct if you are direct, be skeptical if you are skeptical.
+9. Act human. Make conversational pivots if it fits your actual personality.
 
 Respond ONLY with your in-character message. No JSON, no labels, no analysis. Just speak as ${persona.name}.`;
 }

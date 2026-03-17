@@ -32,25 +32,26 @@ class PersonPostsScraper(BaseScraper):
     def __init__(self, page: Page, callback: Optional[ProgressCallback] = None):
         super().__init__(page, callback or SilentCallback())
     
-    async def scrape(self, profile_url: str, limit: int = 10, on_progress=None) -> List[Post]:
+    async def scrape(self, profile_url: str, limit: int = 10, activity_type: str = "all", on_progress=None) -> List[Post]:
         """
         Scrape posts from a LinkedIn person's activity feed.
         
         Args:
             profile_url: LinkedIn profile URL (e.g. https://linkedin.com/in/username/)
             limit: Maximum number of posts to scrape (default: 10)
+            activity_type: Type of activity to scrape ("all", "posts", "comments", "shares")
             on_progress: Optional async callback(stage, detail, pct) for real-time progress
             
         Returns:
             List of Post objects with text, images, engagement data
         """
-        logger.info(f"Starting person posts scraping: {profile_url}")
+        logger.info(f"Starting person activity scraping: {profile_url} (type: {activity_type})")
         await self.callback.on_start("person_posts", profile_url)
         if on_progress:
-            await on_progress("posts_nav", "Navigating to activity feed", 5)
+            await on_progress("posts_nav", f"Navigating to {activity_type} activity feed", 5)
         
         # Build the activity/posts URL
-        activity_url = self._build_activity_url(profile_url)
+        activity_url = self._build_activity_url(profile_url, activity_type)
         await self.navigate_and_wait(activity_url)
         await self.callback.on_progress("Navigated to activity page", 10)
         if on_progress:
@@ -64,13 +65,13 @@ class PersonPostsScraper(BaseScraper):
         
         # Scrape posts with scrolling
         posts = await self._scrape_posts(limit, on_progress=on_progress)
-        await self.callback.on_progress(f"Scraped {len(posts)} posts", 100)
+        await self.callback.on_progress(f"Scraped {len(posts)} items", 100)
         await self.callback.on_complete("person_posts", posts)
         
-        logger.info(f"Successfully scraped {len(posts)} posts from {profile_url}")
+        logger.info(f"Successfully scraped {len(posts)} items from {profile_url}")
         return posts
     
-    def _build_activity_url(self, profile_url: str) -> str:
+    def _build_activity_url(self, profile_url: str, activity_type: str = "all") -> str:
         """Build the activity feed URL from a profile URL."""
         profile_url = profile_url.rstrip('/')
         
@@ -86,7 +87,7 @@ class PersonPostsScraper(BaseScraper):
         else:
             base_url = profile_url
         
-        return f"{base_url}/recent-activity/all/"
+        return f"{base_url}/recent-activity/{activity_type}/"
     
     async def _wait_for_posts_to_load(self, timeout: int = 30000, on_progress=None) -> None:
         """Wait for the activity feed posts to load on the page."""

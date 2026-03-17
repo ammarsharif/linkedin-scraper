@@ -71,11 +71,34 @@ export async function DELETE(req: NextRequest) {
       query = { profileUrl: personaId };
     }
 
-    const result = await db.collection("cara_personas").deleteOne(query);
+    // Find the persona first to get all identifiers for cascade delete
+    const persona = await db.collection("cara_personas").findOne(query);
+    
+    if (!persona) {
+      return NextResponse.json({ error: "Persona not found." }, { status: 404 });
+    }
+
+    const p_id = persona._id.toString();
+    const p_url = persona.profileUrl;
+
+    // Cascade delete: delete all simulation sessions associated with this persona
+    // We check for both _id string and profileUrl to be thorough
+    const sessionDeleteResult = await db.collection("cara_simulation_sessions").deleteMany({
+      $or: [
+        { personaId: p_id },
+        { personaId: p_url }
+      ]
+    });
+
+    console.log(`[cara-personas] Cascade delete: removed ${sessionDeleteResult.deletedCount} sessions for ${persona.name}`);
+
+    // Finally delete the persona
+    const result = await db.collection("cara_personas").deleteOne({ _id: persona._id });
 
     return NextResponse.json({
       success: true,
       deleted: result.deletedCount > 0,
+      sessionsDeleted: sessionDeleteResult.deletedCount,
     });
   } catch (err) {
     console.error("[cara-personas] DELETE error:", err);

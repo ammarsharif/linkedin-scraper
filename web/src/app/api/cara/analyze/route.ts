@@ -55,6 +55,13 @@ interface Post {
   articleUrl: string | null;
 }
 
+interface Comment {
+  urn: string;
+  text: string;
+  postedDate: string;
+  postUrl: string;
+}
+
 // ── OpenAI ────────────────────────────────────────────────────────────────────
 
 function getOpenAIClient(): OpenAI {
@@ -117,6 +124,7 @@ async function generatePersonaAnalysis(
   openai: OpenAI,
   profile: Profile,
   posts: Post[],
+  comments: Comment[] = [],
 ): Promise<Record<string, unknown>> {
   const postTexts = posts.filter((p) => p.text?.trim());
   const topPosts = [...postTexts].sort((a, b) => scorePost(b) - scorePost(a)).slice(0, 15);
@@ -128,77 +136,76 @@ async function generatePersonaAnalysis(
     )
     .join("\n\n---\n\n");
 
-  const systemPrompt = `You are Cara, a Client Avatar Simulation Engine. Your job is to deeply analyze a LinkedIn prospect's profile and posts, then produce a comprehensive persona document that will be used to ROLEPLAY as this person in sales practice simulations.
+  const commentsSummary = comments
+    .filter((c) => c.text?.trim())
+    .slice(0, 10)
+    .map((c, i) => `[Comment ${i + 1}] (date: ${c.postedDate || "unknown"})\n${stripEmojis(c.text)}`)
+    .join("\n\n---\n\n");
 
-The analysis must be thorough enough that another AI (or even a human actor) could convincingly impersonate this person's communication style, values, decision-making process, and likely reactions to sales approaches.
+  const systemPrompt = `You are Cara, the elite Client Avatar Simulation Engine. Your goal is to dissect a LinkedIn prospect's psychology for high-stakes sales simulation.
+
+You must build a document rich in detail but EXTREMELY CONCISE.
 
 CRITICAL RULES:
-- Do NOT use any emojis.
-- Use clear, professional English.
-- Be extremely specific — cite real quotes, topics, patterns from their posts.
-- Do not make things up. Only derive insights from the actual data.
-- Focus on actionable insights for sales simulation.
-
-Respond with valid JSON only. No markdown, no code fences.
+1. STRICT BREVITY: Every bullet point and array item MUST be 2-4 words maximum.
+2. NO EMOJIS.
+3. PROFESSIONAL, PENETRATING English.
+4. COMMENT-BASED STYLE: The 'communicationStyle' section MUST be derived from their comments on other people's posts. If no comments are available in the data, set this entire field to null.
+5. DERIVE, DON'T INVENT: All insights must be 1:1 reflections of their actual content.
 
 JSON Schema:
 {
-  "executiveSummary": "3-5 sentences capturing who this person is, what drives them, and what kind of prospect they represent.",
+  "executiveSummary": "A highly specific 3-sentence profile diagnostic. Sentence 1: A deep dive into their professional identity, seniority, and specific domain of influence. Sentence 2: A breakdown of their primary commercial value, highlighting specific achievements or unique skills. Sentence 3: A diagnostic of their psychological posture and the specific 'hook' needed to prompt engagement.",
   
+  "communicationStyle": {
+    "sectionDescription": "A 1-2 sentence brief detailing how this prospect specifically interacts in public/private settings based on their actual comments and posts.",
+    "linguisticPatterns": ["List 2-4 short phrases"],
+    "commentStyle": "Description of comment behavior.",
+    "shorthand": ["List specific abbreviations used"],
+    "interactionModel": "Engagement model (e.g., 'low frequency, high depth')."
+  },
+
   "personalityProfile": {
-    "communicationStyle": "How they express themselves — direct, storytelling, data-driven, casual, formal, etc. With specific examples.",
-    "tone": "Their typical emotional register — optimistic, skeptical, pragmatic, passionate, reserved, etc.",
-    "values": ["5-7 core values derived from their content — what clearly matters to them"],
-    "motivations": ["What drives them professionally — growth, impact, innovation, stability, etc."],
-    "petPeeves": ["Things they complain about or push back against in their posts"],
-    "decisionMakingStyle": "How they likely make decisions — data-driven, gut instinct, consensus-seeking, etc."
+    "sectionDescription": "A 1-2 sentence brief on their character baseline, explaining how their values translate into their professional temperament.",
+    "tone": "Emotional baseline (e.g., 'calm and inquisitive').",
+    "values": ["3-5 core values"],
+    "motivations": ["2-3 main motivators"],
+    "petPeeves": ["1-3 specific red flags"],
+    "personalityTraps": ["1-2 conversational derailment patterns"],
+    "decisionMakingStyle": "Diagnostic of how they pull the trigger on decisions."
   },
   
   "professionalInsights": {
-    "currentRole": "Their current position and responsibilities",
-    "currentFocus": "What they are actively working on or prioritizing right now",
-    "industryExpertise": ["Industries or domains they deeply understand"],
-    "areasOfExpertise": ["Specific skills and knowledge areas"],
-    "challenges": ["Problems, frustrations, or pain points they have mentioned"],
-    "achievements": ["Notable accomplishments they have shared"],
-    "toolsAndTech": ["Technologies, platforms, or tools they use or advocate for"],
-    "careerTrajectory": "How their career has evolved and where they seem to be heading"
+    "sectionDescription": "A 1-2 sentence brief on their career traction, current leverage points, and immediate organizational priorities.",
+    "currentRole": "Diagnostic of current seat.",
+    "currentFocus": "Their #1 immediate priority.",
+    "industryExpertise": ["2-3 core domains"],
+    "areasOfExpertise": ["3-4 specific skills"],
+    "challenges": ["1-2 high-level pain points"],
+    "achievements": ["1-2 ego-boosters/wins"],
+    "toolsAndTech": ["Top 3 tools"],
+    "secretHooks": ["1-2 niche interests or conversation starters"]
   },
   
   "buyerProfile": {
-    "buyerType": "One of: Analytical (data-driven, methodical), Driver (results-oriented, decisive), Amiable (relationship-focused, harmonious), Expressive (vision-driven, enthusiastic)",
-    "decisionFactors": ["What matters most when they evaluate solutions — ROI, ease of use, team impact, scalability, etc."],
-    "likelyObjections": ["Specific objections they would likely raise based on their personality and values"],
-    "buyingTriggers": ["What would make them interested — specific pain points, growth goals, competitive pressure, etc."],
-    "dealBreakers": ["Things that would immediately kill interest — pushy sales, lack of proof, etc."],
-    "warmthLevel": 5,
-    "trustBuilders": ["What would build their trust — case studies, peer recommendations, technical demos, etc."]
-  },
-  
-  "simulationGuidelines": {
-    "howTheyGreet": "How they typically start conversations — formal, casual, direct, etc.",
-    "responseLength": "Do they write long, detailed responses or keep things brief?",
-    "questionStyle": "What kinds of questions do they ask — probing, clarifying, challenging, etc.",
-    "objectionStyle": "How do they push back — directly, diplomatically, with questions, with silence?",
-    "engagementSignals": "What indicates they are interested vs. disengaged?",
-    "samplePhrases": ["5-8 phrases or speech patterns characteristic of this person that an AI should use when roleplaying them"],
-    "topicsTheyLove": ["Topics that light them up and get them talking"],
-    "topicsToAvoid": ["Topics that bore them or create friction"]
+    "sectionDescription": "A 1-2 sentence brief on their purchasing psychology, explaining what specifically earns their trust vs what triggers immediate rejection.",
+    "buyerType": "Analytical | Driver | Amiable | Expressive",
+    "decisionFactors": ["2-3 primary criteria"],
+    "likelyObjections": ["Predict 1-2 exact 'No' scenarios"],
+    "buyingTriggers": ["1-2 events or needs"],
+    "dealBreakers": ["1-2 relationship killers"],
+    "warmthLevel": "(1-10 range)",
+    "trustBuilders": ["1-2 specific evidence types that work"]
   },
   
   "salesApproach": {
-    "bestApproach": "The ideal way to approach this person for a sales conversation — detailed strategy",
-    "openingAngles": ["3-4 specific conversation openers that would resonate with this person"],
-    "keyMessages": ["Core value propositions that would appeal to their specific needs and values"],
-    "doThis": ["Specific things a sales rep SHOULD do when engaging this person"],
-    "avoidThis": ["Specific things a sales rep should NOT do"],
-    "followUpStrategy": "How to follow up without being annoying, based on their communication preferences"
-  },
-  
-  "quotableContent": {
-    "memorableQuotes": ["3-5 direct quotes from their posts that reveal their character"],
-    "recurringThemes": ["Topics and ideas they consistently return to"],
-    "strongOpinions": ["Positions they hold strongly and defend"]
+    "sectionDescription": "A 1-2 sentence brief on the 'master key' strategy for opening a dialogue with this specific individual.",
+    "bestApproach": "The 'Golden Strategy' (detailed tactical summary).",
+    "openingAngles": ["2-3 short openers (max 8 words each)"],
+    "keyMessages": ["1-2 value props (max 8 words each)"],
+    "doThis": ["2-3 essential moves (2-4 words each)"],
+    "avoidThis": ["2-3 failure moves (2-4 words each)"],
+    "followUpStrategy": "Short note (max 10 words)."
   }
 }`;
 
@@ -225,6 +232,10 @@ ${formatAccomplishments(profile.accomplishments)}
 THEIR RECENT POSTS (${postTexts.length} total, showing top ${topPosts.length} by engagement):
 
 ${postsSummary || "No posts available"}
+
+THEIR COMMENTS ON OTHER POSTS (revealing true texting/writing style):
+
+${commentsSummary || "No comments available"}
 
 Generate a complete, detailed persona analysis. Every section must be thoroughly filled with specific, evidence-backed insights. This persona will be used to simulate realistic conversations with this person.`;
 
@@ -308,60 +319,99 @@ export async function POST(req: NextRequest) {
 
     console.log(`[cara-analyze] Scraping profile: ${profileUrl}, limit=${limit}, force=${force}`);
 
-    // ── Step 1: Scrape the profile via Python backend ──
+    // ── Step 1: Scrape the profile via Python backend (Streaming) ──
     const backendUrl =
       process.env.PYTHON_BACKEND_URL?.replace(/\/$/, "") || "http://127.0.0.1:8000";
-    const apiResponse = await fetch(`${backendUrl}/scrape`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "ngrok-skip-browser-warning": "true",
-        "User-Agent": "NextJS-Backend",
-      },
-      body: JSON.stringify({
-        cookieString,
-        profileUrl: profileUrl.trim(),
-        limit,
-      }),
-    });
-
-    if (!apiResponse.ok) {
-      const errorText = await apiResponse.text();
-      return NextResponse.json(
-        {
-          error: `Scraper API error: ${apiResponse.statusText}. Details: ${errorText}`,
+    
+    console.log(`[cara-analyze] Starting stream-scrape for: ${profileUrl}`);
+    
+    let scrapeResult: any = null;
+    try {
+      const response = await fetch(`${backendUrl}/scrape-stream`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "ngrok-skip-browser-warning": "true",
+          "User-Agent": "NextJS-Backend",
         },
-        { status: apiResponse.status },
+        body: JSON.stringify({
+          cookieString,
+          profileUrl: profileUrl.trim(),
+          limit,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        return NextResponse.json(
+          { error: `Scraper stream error: ${response.statusText}. Details: ${errorText}` },
+          { status: response.status }
+        );
+      }
+
+      if (!response.body) {
+        throw new Error("Response body is null");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            try {
+              const chunk = JSON.parse(line.slice(6));
+              if (chunk.stage === "result") {
+                scrapeResult = chunk.data;
+              } else if (chunk.stage === "error") {
+                throw new Error(chunk.detail || "Unknown scraper error");
+              } else {
+                // Log progress to server console
+                // console.log(`[cara-scraper] ${chunk.stage}: ${chunk.detail} (${chunk.pct}%)`);
+              }
+            } catch (e) {
+              if (e instanceof Error && e.message.includes("scraper error")) throw e;
+              // Ignore parse errors for keep-alive or malformed lines
+            }
+          }
+        }
+      }
+    } catch (scrapeErr) {
+      console.error("[cara-analyze] Scrape stream failed:", scrapeErr);
+      return NextResponse.json(
+        { error: `Scraping failed: ${scrapeErr instanceof Error ? scrapeErr.message : "Connection lost"}` },
+        { status: 500 }
       );
     }
 
-    const scrapeResult = await apiResponse.json();
-
-    if (scrapeResult.error) {
-      if (
-        scrapeResult.error.includes("Not logged in") ||
-        scrapeResult.error.includes("authenticate")
-      ) {
-        return NextResponse.json(
-          { error: "Not logged in to LinkedIn. Please re-authenticate." },
-          { status: 401 },
-        );
-      }
-      return NextResponse.json({ error: scrapeResult.error }, { status: 500 });
+    if (!scrapeResult || scrapeResult.error) {
+      return NextResponse.json(
+        { error: scrapeResult?.error || "Failed to get scrape result from stream" },
+        { status: 500 }
+      );
     }
 
     const profile: Profile = scrapeResult.profile;
     const posts: Post[] = scrapeResult.posts || [];
+    const comments: Comment[] = scrapeResult.comments || [];
 
     if (!profile || !profile.name) {
       return NextResponse.json({ error: "Could not extract profile data" }, { status: 500 });
     }
 
-    console.log(`[cara-analyze] Analyzing ${posts.length} posts for ${profile.name}`);
+    console.log(`[cara-analyze] Analyzing ${posts.length} posts and ${comments.length} comments for ${profile.name}`);
 
     // ── Step 2: Generate AI persona analysis ──
     const openai = getOpenAIClient();
-    const analysis = await generatePersonaAnalysis(openai, profile, posts);
+    const analysis = await generatePersonaAnalysis(openai, profile, posts, comments);
 
     console.log(`[cara-analyze] Persona analysis generated for ${profile.name}`);
 

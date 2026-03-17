@@ -171,21 +171,12 @@ def _do_scrape(cookie_string: str, profile_url: str, limit: int, progress_queue=
 
                     # Create a progress callback for SSE
                     async def posts_progress(stage, detail, pct):
-                        # Remap pct from 0-100 to 30-90
-                        mapped_pct = 30 + int(pct * 0.6)
+                        # Remap pct from 0-100 to 30-60
+                        mapped_pct = 30 + int(pct * 0.3)
                         emit(stage, detail, mapped_pct)
 
-                    posts = await posts_scraper.scrape(p_url, limit=limit, on_progress=posts_progress)
-                    emit("posts", f"Found {len(posts)} posts", 92)
-
-                    # Debug: if no posts, dump page info
-                    if len(posts) == 0:
-                        final_url = browser.page.url
-                        page_title = await browser.page.title()
-                        html_snippet = await browser.page.evaluate('() => document.body.innerHTML.substring(0, 3000)')
-                        print(f"[api][DEBUG] Final URL: {final_url}", file=sys.stderr)
-                        print(f"[api][DEBUG] Page title: {page_title}", file=sys.stderr)
-                        print(f"[api][DEBUG] HTML snippet (first 3000 chars): {html_snippet}", file=sys.stderr)
+                    posts = await posts_scraper.scrape(p_url, limit=limit, activity_type="posts", on_progress=posts_progress)
+                    emit("posts", f"Found {len(posts)} posts", 60)
 
                     result["posts"] = [
                         {
@@ -204,10 +195,34 @@ def _do_scrape(cookie_string: str, profile_url: str, limit: int, progress_queue=
                     ]
                 except Exception as e:
                     print(f"[api] Posts scrape error: {e}", file=sys.stderr)
-                    if "Not logged in" in str(e) or "authenticate" in str(e).lower():
-                        raise e
-                    import traceback
-                    traceback.print_exc(file=sys.stderr)
+                    emit("posts", "Posts extraction had errors", 60)
+
+                # ── Step 3: Scrape comments ─────────────────────────────────────────────
+                emit("comments", "Starting comments scrape", 65)
+                try:
+                    # We reuse the posts_scraper since it's now generic for activity types
+                    comment_limit = max(5, limit // 2) 
+                    
+                    async def comments_progress(stage, detail, pct):
+                        # Remap pct from 0-100 to 65-95
+                        mapped_pct = 65 + int(pct * 0.3)
+                        emit(stage, detail, mapped_pct)
+
+                    comments = await posts_scraper.scrape(p_url, limit=comment_limit, activity_type="comments", on_progress=comments_progress)
+                    emit("comments", f"Found {len(comments)} comments", 95)
+
+                    result["comments"] = [
+                        {
+                            "urn": p.urn or "",
+                            "text": p.text or "",
+                            "postedDate": p.posted_date or "",
+                            "postUrl": p.linkedin_url or "",
+                        }
+                        for p in comments
+                    ]
+                except Exception as e:
+                    print(f"[api] Comments scrape error: {e}", file=sys.stderr)
+                    emit("comments", "Comments extraction had errors", 95)
 
         except Exception as e:
             import traceback
@@ -215,7 +230,7 @@ def _do_scrape(cookie_string: str, profile_url: str, limit: int, progress_queue=
             print(f"Top level error in do_scrape: {error_trace}", file=sys.stderr)
             return {"error": str(e), "traceback": error_trace}
 
-        emit("done", f"Complete — {len(result['posts'])} posts", 100)
+        emit("done", f"Complete — {len(result['posts'])} posts, {len(result.get('comments', []))} comments", 100)
         return result
 
     return asyncio.run(async_scrape())
