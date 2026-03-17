@@ -216,13 +216,14 @@ export default function CindyPage() {
       });
       const data = await res.json();
       if (data.success) {
+        setCronRunning(action === "start");
         showToast(
           action === "start"
             ? "Auto-reply cron started! Checking every 60s."
             : "Auto-reply cron stopped.",
           "success"
         );
-        setTimeout(fetchCronStatus, 500);
+        fetchCronStatus();
       } else {
         showToast(data.error || `Failed to ${action} cron`, "error");
       }
@@ -517,12 +518,12 @@ export default function CindyPage() {
               className="flex items-center gap-2.5 text-sm px-4 py-2 rounded-xl font-semibold transition-all cursor-pointer border disabled:opacity-60"
               style={{
                 background: cronRunning
-                  ? "rgba(16,185,129,0.1)"
-                  : "rgba(239,68,68,0.08)",
+                  ? "rgba(239,68,68,0.08)"
+                  : "rgba(16,185,129,0.1)",
                 borderColor: cronRunning
-                  ? "rgba(16,185,129,0.3)"
-                  : "rgba(239,68,68,0.2)",
-                color: cronRunning ? "#10b981" : "#ef4444",
+                  ? "rgba(239,68,68,0.2)"
+                  : "rgba(16,185,129,0.3)",
+                color: cronRunning ? "#ef4444" : "#10b981",
               }}
               title={
                 cronRunning
@@ -533,42 +534,11 @@ export default function CindyPage() {
               {cronLoading ? (
                 <RefreshCw size={14} className="animate-spin" />
               ) : (
-                <>
-                  <span className="relative flex h-2.5 w-2.5">
-                    {cronRunning && (
-                      <span
-                        className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
-                        style={{ background: "#10b981" }}
-                      />
-                    )}
-                    <span
-                      className="relative inline-flex rounded-full h-2.5 w-2.5"
-                      style={{
-                        background: cronRunning ? "#10b981" : "#ef4444",
-                      }}
-                    />
-                  </span>
-                  {cronRunning ? <Play size={14} /> : <Square size={14} />}
-                </>
+                cronRunning ? <Square size={14} /> : <Play size={14} />
               )}
-              <span>{cronRunning ? "Cron Active" : "Cron Off"}</span>
+              <span>{cronRunning ? "Stop Cron" : "Start Cron"}</span>
             </button>
 
-            {/* Log toggle */}
-            <button
-              onClick={() => setShowCronLogs(!showCronLogs)}
-              id="cron-logs-btn"
-              className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400 hover:text-gray-200 transition-all border border-white/10 cursor-pointer"
-              title="Toggle cron logs"
-            >
-              <Terminal size={13} />
-              <span>Logs</span>
-              {showCronLogs ? (
-                <ChevronUp size={12} />
-              ) : (
-                <ChevronDown size={12} />
-              )}
-            </button>
 
             <div
               style={{
@@ -584,96 +554,10 @@ export default function CindyPage() {
               <span>
                 {cronLastRun ? formatTime(cronLastRun) : "Never"}
               </span>
-              <span>·</span>
-              <span>{cronProcessedCount} processed</span>
             </div>
           </div>
         </div>
       </header>
-
-      {/* CRON LOG PANEL */}
-      {showCronLogs && (
-        <div className="relative z-20 mx-auto max-w-7xl px-6 animate-fade-in">
-          <div
-            className="mt-2 rounded-2xl border overflow-hidden"
-            style={{
-              background: "rgba(0,0,0,0.5)",
-              borderColor: "rgba(255,255,255,0.08)",
-              backdropFilter: "blur(16px)",
-            }}
-          >
-            <div
-              className="flex items-center justify-between px-4 py-2.5 border-b"
-              style={{ borderColor: "rgba(255,255,255,0.06)" }}
-            >
-              <div className="flex items-center gap-2">
-                <Terminal size={14} className="text-gray-500" />
-                <span className="text-xs font-semibold text-gray-400">
-                  Auto-Reply Cron Logs
-                </span>
-                {cronRunning && (
-                  <span className="px-1.5 py-0.5 rounded-md text-[9px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">
-                    LIVE
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={clearCronLogs}
-                  className="text-xs text-gray-500 hover:text-gray-300 cursor-pointer transition-colors flex items-center gap-1"
-                >
-                  <Trash2 size={11} /> Clear
-                </button>
-                <button
-                  onClick={resetProcessed}
-                  className="text-xs text-gray-500 hover:text-gray-300 cursor-pointer transition-colors flex items-center gap-1"
-                >
-                  <RotateCcw size={11} /> Reset IDs
-                </button>
-                <button
-                  onClick={fetchCronStatus}
-                  className="text-xs text-gray-500 hover:text-gray-300 cursor-pointer transition-colors flex items-center gap-1"
-                >
-                  <RefreshCw size={11} /> Refresh
-                </button>
-              </div>
-            </div>
-            <div
-              className="px-4 py-3 max-h-[200px] overflow-y-auto font-mono text-xs leading-relaxed"
-              style={{ color: "#8b949e" }}
-            >
-              {cronLogs.length === 0 ? (
-                <p className="text-gray-600 italic">
-                  No logs yet. Start the cron to see activity.
-                </p>
-              ) : (
-                cronLogs.map((entry, i) => (
-                  <div
-                    key={i}
-                    className="py-0.5 flex gap-2"
-                    style={{
-                      color:
-                        entry.type === "error"
-                          ? "#f87171"
-                          : entry.type === "success"
-                          ? "#34d399"
-                          : entry.type === "warning"
-                          ? "#fbbf24"
-                          : "#8b949e",
-                    }}
-                  >
-                    <span className="text-gray-600 flex-shrink-0">
-                      {formatTime(entry.time)}
-                    </span>
-                    <span>{entry.message}</span>
-                  </div>
-                ))
-              )}
-              <div ref={cronLogEndRef} />
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* TAB BAR */}
       <div className="relative z-10 mx-auto max-w-7xl px-6 pt-6">
@@ -1031,23 +915,29 @@ export default function CindyPage() {
                   onClick={toggleCron}
                   disabled={cronLoading}
                   id="cron-toggle-main-btn"
-                  className="px-6 py-3 rounded-xl font-bold text-sm transition-all cursor-pointer disabled:opacity-50"
+                  className="px-6 py-3 rounded-xl font-bold text-sm transition-all cursor-pointer disabled:opacity-50 flex items-center gap-2"
                   style={{
                     background: cronRunning
-                      ? "rgba(239,68,68,0.12)"
-                      : CINDY_GRADIENT,
-                    color: cronRunning ? "#ef4444" : "white",
-                    border: cronRunning
-                      ? "1px solid rgba(239,68,68,0.25)"
-                      : "none",
+                      ? "rgba(239,68,68,0.08)"
+                      : "rgba(16,185,129,0.1)",
+                    borderColor: cronRunning
+                      ? "rgba(239,68,68,0.2)"
+                      : "rgba(16,185,129,0.3)",
+                    color: cronRunning ? "#ef4444" : "#10b981",
                   }}
                 >
                   {cronLoading ? (
                     <RefreshCw size={16} className="animate-spin" />
                   ) : cronRunning ? (
-                    "Stop Cron"
+                    <>
+                      <Square size={16} />
+                      Stop Cron
+                    </>
                   ) : (
-                    "Start Cron"
+                    <>
+                      <Play size={16} />
+                      Start Cron
+                    </>
                   )}
                 </button>
               </div>
