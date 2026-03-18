@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getDatabase } from "@/lib/mongodb";
+import { ObjectId } from "mongodb";
 import OpenAI from "openai";
 
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 function getOpenAIClient(): OpenAI {
   const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    throw new Error("OPENAI_API_KEY environment variable is not set.");
-  }
+  if (!apiKey) throw new Error("OPENAI_API_KEY environment variable is not set.");
   return new OpenAI({ apiKey });
 }
 
@@ -15,75 +15,106 @@ export async function POST(req: NextRequest) {
   try {
     const cookieString = req.cookies.get("li_session")?.value;
     if (!cookieString) {
-      return NextResponse.json(
-        { error: "Not authenticated." },
-        { status: 401 }
-      );
+      return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
     }
 
-    const { profile, sourceContent, format } = await req.json();
+    const { personaId, originalPost, platforms } = await req.json();
 
-    if (!profile && !sourceContent) {
-      return NextResponse.json(
-        { error: "Profile data or source content is required." },
-        { status: 400 }
-      );
+    if (!personaId) {
+      return NextResponse.json({ error: "personaId is required." }, { status: 400 });
+    }
+    if (!originalPost?.trim()) {
+      return NextResponse.json({ error: "originalPost is required." }, { status: 400 });
+    }
+    if (!Array.isArray(platforms) || platforms.length === 0) {
+      return NextResponse.json({ error: "At least one platform must be selected." }, { status: 400 });
     }
 
-    if (!format) {
-      return NextResponse.json(
-        { error: "A target format is required (e.g., 'Twitter Thread')." },
-        { status: 400 }
-      );
+    const db = await getDatabase();
+    const persona = await db
+      .collection("cara_personas")
+      .findOne({ _id: new ObjectId(personaId) });
+
+    if (!persona) {
+      return NextResponse.json({ error: "Persona not found." }, { status: 404 });
     }
 
-    const openai = getOpenAIClient();
+    const a = persona.analysis || {};
+    const ps = a.personalityProfile || {};
+    const cs = a.communicationStyle || {};
+    const pi = a.professionalInsights || {};
+    const bp = a.buyerProfile || {};
+    const sa = a.salesApproach || {};
 
-    let contextBlock = "SOURCE MATERIAL TO REPURPOSE:\n";
-    if (sourceContent) {
-      contextBlock += `LinkedIn Post / Raw Content:\n"${sourceContent}"\n\n`;
-    }
-    if (profile) {
-      contextBlock += `Author Profile Context:\nName: ${profile.name}\nHeadline: ${profile.headline || "N/A"}\nExpertise: ${profile.areasOfExpertise?.join(", ") || "N/A"}\nFocus: ${profile.currentFocus || "N/A"}\n\n`;
-    }
+    const platformInstructions: Record<string, string> = {
+      facebook: "Facebook Post: Conversational storytelling tone, 150-300 words. Open with a relatable hook, tell a short story or insight, end with a question or soft CTA.",
+      twitter: "Twitter/X Thread: 3-5 tweets. Tweet 1 is a punchy hook. Each tweet is under 280 characters. Number each tweet (1/, 2/, etc.). Last tweet has the CTA.",
+      instagram: "Instagram Caption: 100-150 words with relevant emojis woven in naturally. End with exactly 10 relevant hashtags on a new line.",
+      email: "Email Newsletter: Start with 'Subject: ...' on its own line, then a blank line, then the body (200-300 words). Personal, warm tone, clear CTA at the end.",
+    };
 
-    const prompt = `You are Cora, Devs Colab's elite Content Repurposing Bot.
-Your goal is to take the provided LinkedIn content or profile context and magically repurpose it into a highly engaging piece of content tailored specifically for the requested platform/format.
+    const selectedInstructions = (platforms as string[])
+      .map((p: string) => `- ${platformInstructions[p] || p}`)
+      .join("\n");
 
-TARGET FORMAT: ${format}
+    const resultKeys = (platforms as string[]).map((p: string) => `"${p}": "..."`).join(",\n  ");
 
-${contextBlock}
+    const systemPrompt = `You are Cora, an elite Content Repurposing Bot.
+
+Your job is to repurpose a LinkedIn post into platform-specific content written in a tone and language that resonates with the buyer persona below. Speak TO this type of buyer — address their pain points, use their language, reflect their values.
+
+BUYER PERSONA:
+Name: ${persona.name}
+Role: ${pi.currentRole || "N/A"}
+Tone: ${ps.tone || "N/A"}
+Buyer Type: ${bp.buyerType || "N/A"}
+Motivations: ${(ps.motivations || []).join(", ") || "N/A"}
+Pain Points / Challenges: ${(pi.challenges || []).join(", ") || "N/A"}
+Language Style / Shorthand: ${(cs.shorthand || []).join(", ") || "N/A"}
+Linguistic Patterns: ${(cs.linguisticPatterns || []).join(", ") || "N/A"}
+Key Messages That Resonate: ${(sa.keyMessages || []).join(", ") || "N/A"}
+Executive Summary: ${a.executiveSummary || "N/A"}
+
+ORIGINAL LINKEDIN POST:
+"""
+${originalPost.trim()}
+"""
+
+PLATFORM REQUIREMENTS:
+${selectedInstructions}
 
 INSTRUCTIONS:
-1. Emulate the best practices of the target format (e.g., if Twitter Thread, use short punchy hooks, line breaks, and emojis; if Newsletter, use a welcoming intro, subheadings, and a clear call to action).
-2. Retain the core value and voice of the original author.
-3. Don't add fluffy or generic corporate jargon. Ensure it sounds human, insightful, and attention-grabbing.
-4. Output should include a "copy" which is the actual generated content, and an "explanation" briefly explaining why this framing works well for the target format.
+1. Adapt the core message of the post to speak directly to this persona's world.
+2. Use language, phrasing, and examples that match their communication style.
+3. Do not add generic corporate filler. Keep it human and insightful.
+4. Preserve the original post's core value and insight.
 
-Return exactly this JSON format:
+Return ONLY valid JSON in exactly this format (no markdown, no extra keys):
 {
-  "content": "The full repurposed content here... (Use \\n for line breaks)",
-  "explanation": "Why this angle works..."
+  ${resultKeys}
 }`;
 
+    const openai = getOpenAIClient();
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
-      messages: [{ role: "system", content: prompt }],
+      messages: [{ role: "system", content: systemPrompt }],
       response_format: { type: "json_object" },
-      temperature: 0.7,
-      max_tokens: 1200,
+      temperature: 0.75,
+      max_tokens: 2000,
     });
 
     const raw = completion.choices[0]?.message?.content || "{}";
-    const data = JSON.parse(raw);
+    const generated = JSON.parse(raw);
 
     return NextResponse.json({
       success: true,
-      content: data.content,
-      explanation: data.explanation
+      personaId,
+      personaName: persona.name,
+      originalPost,
+      results: generated,
     });
   } catch (err) {
-    console.error("[cora-generate] POST error:", err);
+    console.error("[cora/generate] POST error:", err);
     const msg = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json({ error: msg }, { status: 500 });
   }

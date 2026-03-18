@@ -25,7 +25,7 @@ export const BOTS = [
   { id: "cindy", name: "Cindy", desc: "Customer Service", path: "/cindy", icon: Headphones, color: "#10b981", bg: "rgba(16,185,129,0.1)" },
   { id: "sienna", name: "Sienna", desc: "Lead Scoring", path: "/sienna", icon: Zap, color: "#c96ef5", bg: "rgba(201,110,245,0.1)", requiredLocal: "sienna_payload" },
   { id: "cara", name: "Cara", desc: "Avatar Simulator", path: "/cara", icon: UserCheck, color: "#f43f5e", bg: "rgba(244,63,94,0.1)" },
-  // { id: "cora", name: "Cora", desc: "Content Repurposing", path: "/cora", icon: Share2, color: "#fbbf24", bg: "rgba(251,191,36,0.1)" },
+  { id: "cora", name: "Cora", desc: "Content Repurposing", path: "/cora", icon: Share2, color: "#fbbf24", bg: "rgba(251,191,36,0.1)" },
 ];
 
 export function BotSwitcher({ currentBotId }: { currentBotId: string }) {
