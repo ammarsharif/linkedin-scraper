@@ -2,15 +2,16 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { 
-  Linkedin, 
-  Search, 
-  MessageSquare, 
-  Zap, 
-  Mail, 
+import {
+  Linkedin,
+  Search,
+  MessageSquare,
+  Zap,
+  Mail,
   Headphones,
   UserCheck,
   Share2,
+  Target,
   ChevronDown,
   LayoutGrid,
   AlertTriangle
@@ -26,6 +27,7 @@ export const BOTS = [
   { id: "sienna", name: "Sienna", desc: "Lead Scoring", path: "/sienna", icon: Zap, color: "#c96ef5", bg: "rgba(201,110,245,0.1)", requiredLocal: "sienna_payload" },
   { id: "cara", name: "Cara", desc: "Avatar Simulator", path: "/cara", icon: UserCheck, color: "#f43f5e", bg: "rgba(244,63,94,0.1)" },
   { id: "cora", name: "Cora", desc: "Content Repurposing", path: "/cora", icon: Share2, color: "#fbbf24", bg: "rgba(251,191,36,0.1)" },
+  { id: "febo", name: "Febo", desc: "Sales Scripts & FB Engagement", path: "/febo", icon: Target, color: "#6366f1", bg: "rgba(99,102,241,0.1)" },
 ];
 
 export function BotSwitcher({ currentBotId }: { currentBotId: string }) {
