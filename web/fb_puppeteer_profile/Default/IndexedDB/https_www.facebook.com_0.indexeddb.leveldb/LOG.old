@@ -1,0 +1,7 @@
+2026/03/19-23:10:59.497 50fc Reusing MANIFEST D:\Devs Colab\linkedin_scraper\web\fb_puppeteer_profile\Default\IndexedDB\https_www.facebook.com_0.indexeddb.leveldb/MANIFEST-000001
+2026/03/19-23:10:59.498 50fc Recovering log #3
+2026/03/19-23:10:59.562 50fc Reusing old log D:\Devs Colab\linkedin_scraper\web\fb_puppeteer_profile\Default\IndexedDB\https_www.facebook.com_0.indexeddb.leveldb/000003.log 
+2026/03/19-23:18:00.279 557c Level-0 table #5: started
+2026/03/19-23:18:00.303 557c Level-0 table #5: 1162469 bytes OK
+2026/03/19-23:18:00.306 557c Delete type=0 #3
+2026/03/19-23:18:00.307 557c Manual compaction at level-0 from (begin) .. (end); will stop at (end)
