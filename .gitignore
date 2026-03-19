@@ -43,3 +43,9 @@ MANIFEST.ini
 # Basic package build artifacts
 build-basic/
 dist-basic/
+
+# Node/Next
+node_modules/
+web/.next/
+web/fb_puppeteer_profile/
+fb_puppeteer_profile/

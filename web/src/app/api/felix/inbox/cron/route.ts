@@ -29,7 +29,7 @@ async function getBrowser(): Promise<Browser> {
   if (!g.felixBrowser || !g.felixBrowser.connected) {
     addCronLog("Starting new Puppeteer browser instance...", "info");
     g.felixBrowser = await puppeteer.launch({
-      headless: true,
+      headless: false,
       userDataDir: "./fb_puppeteer_profile",
       defaultViewport: null,
       args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-notifications", "--window-size=1280,800"]
@@ -59,7 +59,11 @@ async function cronTick(c_user: string, xs: string, datr: string | null) {
     }
 
     addCronLog("Navigating to Facebook Messenger...", "info");
-    await page.goto("https://www.facebook.com/messages/", { waitUntil: "domcontentloaded", timeout: 45000 });
+    try {
+      await page.goto("https://www.facebook.com/messages/", { waitUntil: "domcontentloaded", timeout: 45000 });
+    } catch (e: any) {
+      if (!e.message.includes("ERR_ABORTED")) throw e;
+    }
 
     // Wait a few seconds for Facebook's React app to load and E2EE to sync via IndexedDB
     await new Promise(r => setTimeout(r, 6000));
@@ -104,10 +108,38 @@ async function cronTick(c_user: string, xs: string, datr: string | null) {
     const unreadThreads = allThreadsDebug.filter(t => {
        const ariaLower = t.aria.toLowerCase();
        const textLower = t.text.toLowerCase();
-       if (ariaLower.includes("unread") || textLower.includes("unread")) return true;
-       if (t.svgFills.includes('#0866FF') || t.svgFills.includes('#0866ff')) return true;
-       return false;
+       let match = false;
+       let reason = "";
+       
+       // 1. Explicit indicators
+       if (ariaLower.includes("unread") || textLower.includes("unread") || t.svgFills.includes('#0866FF') || t.svgFills.includes('#0866ff')) {
+          match = true;
+          reason = "Unread indicators present (aria/text/blue-dot)";
+       }
+
+       // 2. Auto-Read Edge Case
+       if (!match && t.threadId && page.url().includes(t.threadId)) {
+          if (!t.text.includes("You:")) {
+             match = true;
+             reason = "Current open thread and last message not from You";
+          } else {
+             reason = "Current open thread but last message IS from You";
+          }
+       }
+
+       if (match) {
+          addCronLog(`Matched Thread ${t.threadId}: ${reason}`, "info");
+       } else if (t.threadId) {
+          // Log skip if it's potentially interesting
+          if (page.url().includes(t.threadId)) {
+             addCronLog(`Checked Current Thread ${t.threadId}: ${reason || "No match"}`, "info");
+          }
+       }
+
+       return match;
     });
+
+    addCronLog(`Puppeteer found ${unreadThreads.length} potential unread threads.`, "info");
 
     // Deduplicate threads found in the sidebar
     const uniqueThreads = new Map<string, typeof unreadThreads[0]>();
@@ -119,7 +151,6 @@ async function cronTick(c_user: string, xs: string, datr: string | null) {
 
     const threadsToProcess = Array.from(uniqueThreads.values());
     if (threadsToProcess.length === 0) {
-      addCronLog("Puppeteer found 0 unread threads.", "info");
       consecutiveErrors = 0;
       return;
     }
@@ -215,7 +246,11 @@ async function cronTick(c_user: string, xs: string, datr: string | null) {
     }
 
     // Go back to inbox so next cron can scan the sidebar
-    await page.goto("https://www.facebook.com/messages/", { waitUntil: "domcontentloaded" });
+    try {
+      await page.goto("https://www.facebook.com/messages/", { waitUntil: "domcontentloaded", timeout: 45000 });
+    } catch (e: any) {
+      if (!e.message.includes("ERR_ABORTED")) throw e;
+    }
 
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : "Unknown error";
