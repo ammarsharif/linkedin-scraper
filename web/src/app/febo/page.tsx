@@ -22,6 +22,8 @@ import {
   Users,
   Send,
   FileText,
+  FolderOpen,
+  Trash2,
 } from "lucide-react";
 import { BotSwitcher } from "@/components/BotSwitcher";
 
@@ -31,8 +33,14 @@ const FEBO_COLOR = "#6366f1";
 
 // ── Content Renderer ──────────────────────────────────────────────────────────
 // Detects UPPERCASE_LABEL: lines and renders them as styled section headers.
-function ScriptContent({ text, accentColor }: { text: string; accentColor: string }) {
-  const lines = text.split(/\n/);
+function ScriptContent({ text, accentColor }: { text: any; accentColor: string }) {
+  let safeText = typeof text === 'string' ? text : Array.isArray(text) ? text.join('\n\n') : JSON.stringify(text, null, 2) || '';
+  
+  // Fix inline headers like "REPLY 1: Hello!" by splitting them onto a new line,
+  // so the header parser can catch them.
+  safeText = safeText.replace(/^([A-Z0-9][A-Z0-9\s\/\-()\.]{0,40}):\s+([^\n]+)/gm, '$1:\n$2');
+
+  const lines = safeText.split(/\n/);
   const elements: React.ReactNode[] = [];
   let key = 0;
 
@@ -128,7 +136,7 @@ function ScriptContent({ text, accentColor }: { text: string; accentColor: strin
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type FeboMode = "scripts" | "engagement";
+type FeboMode = "scripts" | "engagement" | "saved";
 type InputMethod = "persona" | "manual";
 type ScriptType = "sales_call" | "dm_chat" | "demo" | "objection_handling";
 type EngagementType = "comment_reply" | "group_post" | "dm_outreach";
@@ -188,6 +196,143 @@ const ENGAGEMENT_TYPES: EngagementMeta[] = [
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+// ── Saved Library Tab ─────────────────────────────────────────────────────────
+
+function SavedLibraryTab({ showToast }: { showToast: (msg: string, type: "success" | "error") => void }) {
+  const [activeSubTab, setActiveSubTab] = useState<"scripts" | "engagement">("scripts");
+  const [loading, setLoading] = useState(false);
+  const [scripts, setScripts] = useState<any[]>([]);
+  const [engagements, setEngagements] = useState<any[]>([]);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [sRes, eRes] = await Promise.all([
+        fetch("/api/febo/approve-script"),
+        fetch("/api/febo/approve-engagement"),
+      ]);
+      const [sData, eData] = await Promise.all([sRes.json(), eRes.json()]);
+      if (sData.success) setScripts(sData.records || []);
+      if (eData.success) setEngagements(eData.records || []);
+    } catch {
+      showToast("Failed to load saved items", "error");
+    } finally {
+      setLoading(false);
+    }
+  }, [showToast]);
+
+  useEffect(() => { loadData(); }, [loadData]);
+
+  async function handleDelete(id: string, type: "scripts" | "engagement") {
+    if (!confirm("Delete this saved item?")) return;
+    try {
+      const endpoint = type === "scripts" ? "/api/febo/approve-script" : "/api/febo/approve-engagement";
+      const res = await fetch(`${endpoint}?id=${id}`, { method: "DELETE" });
+      const data = await res.json();
+      if (data.success) {
+        showToast("Deleted successfully", "success");
+        if (type === "scripts") setScripts(prev => prev.filter(s => s.id !== id));
+        else setEngagements(prev => prev.filter(e => e.id !== id));
+      } else {
+        showToast(data.error || "Failed to delete", "error");
+      }
+    } catch {
+      showToast("Network error", "error");
+    }
+  }
+
+  function handleCopy(text: string) {
+    navigator.clipboard.writeText(text);
+    showToast("Copied to clipboard!", "success");
+  }
+
+  const renderItem = (item: any, type: "scripts" | "engagement") => {
+    const isExpanded = expandedId === item.id;
+    const meta = type === "scripts" 
+      ? SCRIPT_TYPES.find(s => s.id === item.script_type) 
+      : ENGAGEMENT_TYPES.find(s => s.id === item.engagement_type);
+      
+    if (!meta) return null;
+
+    let displayStr = item.content;
+    if (typeof displayStr !== 'string') {
+      displayStr = Array.isArray(item.content) ? item.content.join('\n\n') : JSON.stringify(item.content);
+    } else {
+      displayStr = displayStr.replace(/\\n/g, '\n');
+    }
+    
+    return (
+      <div key={item.id} className="rounded-2xl border overflow-hidden transition-all mb-4"
+        style={{ background: "rgba(0,0,0,0.4)", borderColor: meta.color + "33" }}>
+        <div className="flex items-center gap-3 px-5 py-3.5 cursor-pointer select-none"
+          onClick={() => setExpandedId(isExpanded ? null : item.id)}
+          style={{ background: meta.bg, borderBottom: isExpanded ? `1px solid ${meta.color + "22"}` : "none" }}>
+          <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
+            style={{ background: "rgba(255,255,255,0.03)", border: `1px solid ${meta.color + "44"}` }}>
+            <meta.icon size={17} style={{ color: meta.color }} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap mb-1">
+              <span className="text-sm font-bold" style={{ color: meta.color }}>{meta.label}</span>
+              {item.persona_name && <span className="text-[10px] font-bold px-2 py-0.5 rounded-md" style={{ background: "rgba(255,255,255,0.08)", color: "#a5b4fc" }}>{item.persona_name}</span>}
+              <span className="text-[10px] text-gray-500">{new Date(item.created_at).toLocaleDateString()}</span>
+            </div>
+            {!isExpanded && (
+              <p className="text-xs text-gray-600 truncate">{displayStr.slice(0, 100)}…</p>
+            )}
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button onClick={e => { e.stopPropagation(); handleCopy(displayStr); }}
+              className="p-1.5 rounded-lg hover:bg-white/10 text-gray-500 hover:text-white transition-all cursor-pointer" title="Copy">
+              <Copy size={13} />
+            </button>
+            <button onClick={e => { e.stopPropagation(); handleDelete(item.id, type); }}
+              className="p-1.5 rounded-lg hover:bg-red-500/10 text-gray-500 hover:text-red-400 transition-all cursor-pointer" title="Delete">
+              <Trash2 size={13} />
+            </button>
+            {isExpanded ? <ChevronUp size={15} className="text-gray-500 ml-1" /> : <ChevronDown size={15} className="text-gray-500 ml-1" />}
+          </div>
+        </div>
+
+        {isExpanded && (
+          <div className="p-5">
+            <ScriptContent text={displayStr} accentColor={meta.color} />
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="animate-fade-in pb-12">
+      <div className="mb-8">
+        <h1 className="text-3xl font-extrabold tracking-tight text-white mb-2">Saved <span className="bg-clip-text text-transparent" style={{ backgroundImage: FEBO_GRADIENT }}>Library</span></h1>
+        <p className="text-sm" style={{ color: "#5a5e72" }}>View all your explicitly approved sales scripts and engagement templates.</p>
+      </div>
+
+      <div className="flex gap-2 mb-6">
+        <button onClick={() => setActiveSubTab("scripts")} className="flex-1 py-2.5 rounded-xl text-sm font-bold transition-all cursor-pointer border"
+          style={activeSubTab === "scripts" ? { background: "rgba(99,102,241,0.15)", borderColor: FEBO_COLOR, color: "#a5b4fc" } : { background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.08)", color: "#6b7280" }}>
+          Sales Scripts ({scripts.length})
+        </button>
+        <button onClick={() => setActiveSubTab("engagement")} className="flex-1 py-2.5 rounded-xl text-sm font-bold transition-all cursor-pointer border"
+          style={activeSubTab === "engagement" ? { background: "rgba(99,102,241,0.15)", borderColor: FEBO_COLOR, color: "#a5b4fc" } : { background: "rgba(255,255,255,0.02)", borderColor: "rgba(255,255,255,0.08)", color: "#6b7280" }}>
+          Facebook Engagement ({engagements.length})
+        </button>
+      </div>
+
+      {loading && scripts.length === 0 && engagements.length === 0 ? (
+        <div className="py-12 flex justify-center"><RefreshCw className="animate-spin text-indigo-500" /></div>
+      ) : activeSubTab === "scripts" ? (
+        scripts.length > 0 ? scripts.map(s => renderItem(s, "scripts")) : <div className="text-center py-10 text-gray-500 text-sm">No saved scripts yet.</div>
+      ) : (
+        engagements.length > 0 ? engagements.map(e => renderItem(e, "engagement")) : <div className="text-center py-10 text-gray-500 text-sm">No saved engagement content yet.</div>
+      )}
+    </div>
+  );
 }
 
 // ── Main Component ────────────────────────────────────────────────────────────
@@ -433,7 +578,6 @@ export default function FeboPage() {
             <BotSwitcher currentBotId="febo" />
           </div>
 
-          {/* Mode tabs */}
           <div className="flex items-center gap-1 p-1 rounded-xl border" style={{ background: "rgba(0,0,0,0.4)", borderColor: "rgba(255,255,255,0.08)" }}>
             <button onClick={() => setMode("scripts")}
               className="flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-semibold transition-all cursor-pointer"
@@ -444,6 +588,11 @@ export default function FeboPage() {
               className="flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-semibold transition-all cursor-pointer"
               style={mode === "engagement" ? { background: FEBO_GRADIENT, color: "#fff" } : { color: "#6b7280" }}>
               <Facebook size={13} /> Facebook Engagement
+            </button>
+            <button onClick={() => setMode("saved")}
+              className="flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-semibold transition-all cursor-pointer"
+              style={mode === "saved" ? { background: FEBO_GRADIENT, color: "#fff" } : { color: "#6b7280" }}>
+              <FolderOpen size={13} /> Saved Library
             </button>
           </div>
 
@@ -649,7 +798,8 @@ export default function FeboPage() {
 
               <div className="space-y-4">
                 {SCRIPT_TYPES.filter(st => selectedScriptTypes.has(st.id)).map(st => {
-                  const content = editedScripts[st.id] || "";
+                  const contentRaw = editedScripts[st.id] || "";
+                  const content = typeof contentRaw === 'string' ? contentRaw : Array.isArray(contentRaw) ? contentRaw.join('\n\n') : JSON.stringify(contentRaw, null, 2);
                   const isApproved = approvedScripts.has(st.id);
                   const isApproving = approvingScript === st.id;
                   const isEditing = editingScript === st.id;
@@ -912,7 +1062,8 @@ export default function FeboPage() {
 
               <div className="space-y-4">
                 {ENGAGEMENT_TYPES.filter(et => selectedEngTypes.has(et.id)).map(et => {
-                  const content = editedEng[et.id] || "";
+                  const contentRaw = editedEng[et.id] || "";
+                  const content = typeof contentRaw === 'string' ? contentRaw : Array.isArray(contentRaw) ? contentRaw.join('\n\n') : JSON.stringify(contentRaw, null, 2);
                   const isApproved = approvedEng.has(et.id);
                   const isApproving = approvingEng === et.id;
                   const isEditing = editingEng === et.id;
@@ -990,6 +1141,11 @@ export default function FeboPage() {
               </div>
             </div>
           )
+        )}
+
+        {/* ══════════════ MODE 3: SAVED LIBRARY ══════════════ */}
+        {mode === "saved" && (
+          <SavedLibraryTab showToast={showToast} />
         )}
       </main>
     </div>

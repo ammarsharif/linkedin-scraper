@@ -78,3 +78,21 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const cookieString = req.cookies.get("li_session")?.value;
+    if (!cookieString) return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
+
+    const { searchParams } = new URL(req.url);
+    const id = searchParams.get("id");
+    if (!id) return NextResponse.json({ error: "id is required." }, { status: 400 });
+
+    const db = await getDatabase();
+    await db.collection("febo_scripts").deleteOne({ id });
+    return NextResponse.json({ success: true });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Unknown error";
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}
