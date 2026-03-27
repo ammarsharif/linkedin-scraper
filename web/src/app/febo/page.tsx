@@ -360,8 +360,8 @@ export default function FeboPage() {
   const [manualInput, setManualInput] = useState({ targetAudience: "", productService: "", mainPainPoint: "", keyObjection: "" });
   const [selectedScriptTypes, setSelectedScriptTypes] = useState<Set<ScriptType>>(new Set(["sales_call", "dm_chat"]));
   const [generatingScripts, setGeneratingScripts] = useState(false);
-  const [generatedScripts, setGeneratedScripts] = useState<Record<ScriptType, string>>({} as Record<ScriptType, string>);
-  const [editedScripts, setEditedScripts] = useState<Record<ScriptType, string>>({} as Record<ScriptType, string>);
+  const [generatedScripts, setGeneratedScripts] = useState<Record<ScriptType, any>>({} as Record<ScriptType, any>);
+  const [editedScripts, setEditedScripts] = useState<Record<ScriptType, any>>({} as Record<ScriptType, any>);
   const [approvedScripts, setApprovedScripts] = useState<Set<ScriptType>>(new Set());
   const [approvingScript, setApprovingScript] = useState<ScriptType | null>(null);
   const [editingScript, setEditingScript] = useState<ScriptType | null>(null);
@@ -374,8 +374,8 @@ export default function FeboPage() {
   const [engPersonaId, setEngPersonaId] = useState("");
   const [selectedEngTypes, setSelectedEngTypes] = useState<Set<EngagementType>>(new Set(["comment_reply", "dm_outreach"]));
   const [generatingEng, setGeneratingEng] = useState(false);
-  const [generatedEng, setGeneratedEng] = useState<Record<EngagementType, string>>({} as Record<EngagementType, string>);
-  const [editedEng, setEditedEng] = useState<Record<EngagementType, string>>({} as Record<EngagementType, string>);
+  const [generatedEng, setGeneratedEng] = useState<Record<EngagementType, any>>({} as Record<EngagementType, any>);
+  const [editedEng, setEditedEng] = useState<Record<EngagementType, any>>({} as Record<EngagementType, any>);
   const [approvedEng, setApprovedEng] = useState<Set<EngagementType>>(new Set());
   const [approvingEng, setApprovingEng] = useState<EngagementType | null>(null);
   const [editingEng, setEditingEng] = useState<EngagementType | null>(null);
