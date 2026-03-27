@@ -4,26 +4,34 @@ import puppeteer, { Browser } from "puppeteer";
 
 export const maxDuration = 60;
 
-// ── In-memory state ───────────────────────────────────────────────────────────
-let cronInterval: ReturnType<typeof setInterval> | null = null;
-let cronRunning = false;
-let lastCronRun: string | null = null;
-let cronLog: { time: string; message: string; type: "info" | "success" | "error" | "warning" }[] = [];
-let processedMessageIds: Set<string> = new Set();
-let consecutiveErrors = 0;
+const g = globalThis as any;
+if (g.felix_initialized === undefined) {
+    g.felix_initialized = true;
 
-let systemPrompt =
-  "You are a professional Facebook Messenger assistant. Reply briefly, warmly and professionally to Facebook messages on behalf of the user. Keep replies under 3 sentences. Do not use emojis.";
+    g.felix_cronInterval = null;
+    g.felix_cronRunning = false;
+    g.felix_lastCronRun = null;
+    g.felix_cronLog = [];
+    g.felix_processedMessageIds = new Set();
+    g.felix_consecutiveErrors = 0;
+    g.felix_systemPrompt = "You are a professional Facebook Messenger assistant. Reply briefly, warmly and professionally to Facebook messages on behalf of the user. Keep replies under 3 sentences. Do not use emojis.";
+    g.felix_storedCUser = null;
+    g.felix_storedXs = null;
+    g.felix_storedDatr = null;
+}
+
+
+
+// ── In-memory state ───────────────────────────────────────────────────────────
 
 function addCronLog(message: string, type: "info" | "success" | "error" | "warning" = "info") {
   const entry = { time: new Date().toISOString(), message, type };
-  cronLog.push(entry);
-  if (cronLog.length > 100) cronLog = cronLog.slice(-100);
+  g.felix_cronLog.push(entry);
+  if (g.felix_cronLog.length > 100) g.felix_cronLog = g.felix_cronLog.slice(-100);
   console.log(`[felix-cron][${type}] ${message}`);
 }
 
 // Global browser instance so we don't spin up a new Chrome every 60 seconds
-const g = globalThis as unknown as { felixBrowser?: Browser };
 
 async function getBrowser(): Promise<Browser> {
   if (!g.felixBrowser || !g.felixBrowser.connected) {
@@ -40,7 +48,8 @@ async function getBrowser(): Promise<Browser> {
 
 // ── Main cron tick ────────────────────────────────────────────────────────────
 async function cronTick(c_user: string, xs: string, datr: string | null) {
-  lastCronRun = new Date().toISOString();
+  if (!g.felix_cronRunning) return;
+  g.felix_lastCronRun = new Date().toISOString();
   addCronLog("Checking for unread messages using Puppeteer Tracker...", "info");
 
   try {
@@ -151,7 +160,7 @@ async function cronTick(c_user: string, xs: string, datr: string | null) {
 
     const threadsToProcess = Array.from(uniqueThreads.values());
     if (threadsToProcess.length === 0) {
-      consecutiveErrors = 0;
+      g.felix_consecutiveErrors = 0;
       return;
     }
 
@@ -162,6 +171,11 @@ async function cronTick(c_user: string, xs: string, datr: string | null) {
     if (!openaiKey) { addCronLog("OPENAI_API_KEY not set.", "error"); return; }
 
     for (const thread of threadsToProcess) {
+      if (!g.felix_cronRunning) {
+        addCronLog("Cron stopped mid-execution. Aborting early.", "warning");
+        return;
+      }
+      
       addCronLog(`Opening thread: ${thread.aria.slice(0, 50)}...`, "info");
       
       await page.goto(thread.href, { waitUntil: "domcontentloaded", timeout: 30000 });
@@ -187,7 +201,7 @@ async function cronTick(c_user: string, xs: string, datr: string | null) {
 
       // Avoid double-replying to the same message
       const msgId = `${thread.threadId}_${latestMessage.slice(0, 50).replace(/\s+/g, "_")}`;
-      if (processedMessageIds.has(msgId)) {
+      if (g.felix_processedMessageIds.has(msgId)) {
         addCronLog(`Skipping thread ${thread.threadId} — message already processed.`, "info");
         continue;
       }
@@ -202,7 +216,7 @@ async function cronTick(c_user: string, xs: string, datr: string | null) {
           body: JSON.stringify({
             model: "gpt-4o-mini", max_tokens: 150,
             messages: [
-              { role: "system", content: systemPrompt },
+              { role: "system", content: g.felix_systemPrompt },
               { role: "user", content: `Reply to this Facebook message: ${latestMessage}` },
             ],
           }),
@@ -221,8 +235,8 @@ async function cronTick(c_user: string, xs: string, datr: string | null) {
         await page.keyboard.press('Enter');
 
         addCronLog(`Replied to ${thread.threadId}: "${replyText.slice(0, 50)}..."`, "success");
-        processedMessageIds.add(msgId);
-        consecutiveErrors = 0;
+        g.felix_processedMessageIds.add(msgId);
+        g.felix_consecutiveErrors = 0;
 
         // Log to DB
         let senderName = thread.aria.includes(',') ? thread.aria.split(',')[1].trim() : "Unknown";
@@ -255,8 +269,8 @@ async function cronTick(c_user: string, xs: string, datr: string | null) {
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : "Unknown error";
     addCronLog(`Puppeteer Cron error: ${errMsg}`, "error");
-    consecutiveErrors++;
-    if (consecutiveErrors >= 3) {
+    g.felix_consecutiveErrors++;
+    if (g.felix_consecutiveErrors >= 3) {
       addCronLog("3 consecutive cron errors. Stopping.", "error");
       stopCron();
     }
@@ -264,30 +278,36 @@ async function cronTick(c_user: string, xs: string, datr: string | null) {
 }
 
 // ── Session store ─────────────────────────────────────────────────────────────
-let storedCUser: string | null = null;
-let storedXs: string | null = null;
-let storedDatr: string | null = null;
 
 function startCron(c_user: string, xs: string, datr: string | null) {
-  if (cronInterval) return;
-  storedCUser = c_user; storedXs = xs; storedDatr = datr;
-  cronRunning = true; consecutiveErrors = 0;
+  if (g.felix_cronInterval) return;
+  g.felix_storedCUser = c_user; g.felix_storedXs = xs; g.felix_storedDatr = datr;
+  g.felix_cronRunning = true; g.felix_consecutiveErrors = 0;
   addCronLog("Puppeteer Cron started — checking every 60 seconds.", "success");
   cronTick(c_user, xs, datr);
-  cronInterval = setInterval(() => {
-    if (storedCUser && storedXs) cronTick(storedCUser, storedXs, storedDatr);
+  g.felix_cronInterval = setInterval(() => {
+    if (g.felix_storedCUser && g.felix_storedXs) cronTick(g.felix_storedCUser, g.felix_storedXs, g.felix_storedDatr);
   }, 60_000);
 }
 
 function stopCron() {
-  if (cronInterval) { clearInterval(cronInterval); cronInterval = null; }
-  cronRunning = false; storedCUser = null; storedXs = null; storedDatr = null; 
+  if (g.felix_cronInterval) { clearInterval(g.felix_cronInterval); g.felix_cronInterval = null; }
+  g.felix_cronRunning = false; g.felix_storedCUser = null; g.felix_storedXs = null; g.felix_storedDatr = null; 
+  
+  if (g.felixBrowser) {
+    addCronLog("Closing browser to forcefully stop Felix task...", "warning");
+    try {
+      g.felixBrowser.close();
+    } catch {}
+    g.felixBrowser = undefined;
+  }
+  
   addCronLog("Cron stopped.", "warning");
 }
 
 // ── GET: Cron status ──────────────────────────────────────────────────────────
 export async function GET() {
-  return NextResponse.json({ running: cronRunning, lastRun: lastCronRun, processedCount: processedMessageIds.size, logs: cronLog.slice(-30), systemPrompt });
+  return NextResponse.json({ running: g.felix_cronRunning, lastRun: g.felix_lastCronRun, processedCount: g.felix_processedMessageIds.size, logs: g.felix_cronLog.slice(-30), systemPrompt: g.felix_systemPrompt });
 }
 
 // ── POST: Start / Stop / Update ───────────────────────────────────────────────
@@ -319,17 +339,17 @@ export async function POST(req: NextRequest) {
       }
 
       if (!c_user || !xs) return NextResponse.json({ error: "Session incomplete (missing c_user or xs)." }, { status: 401 });
-      if (cronRunning) return NextResponse.json({ success: true, message: "Cron is already running.", running: true });
+      if (g.felix_cronRunning) return NextResponse.json({ success: true, message: "Cron is already running.", running: true });
 
       startCron(c_user, xs, datr);
       return NextResponse.json({ success: true, message: "Puppeteer Cron started.", running: true });
     }
 
     if (action === "stop") { stopCron(); return NextResponse.json({ success: true, message: "Cron stopped.", running: false }); }
-    if (action === "clear-logs") { cronLog = []; return NextResponse.json({ success: true, message: "Logs cleared." }); }
-    if (action === "reset-processed") { processedMessageIds = new Set(); return NextResponse.json({ success: true, message: "Processed message IDs reset." }); }
+    if (action === "clear-logs") { g.felix_cronLog = []; return NextResponse.json({ success: true, message: "Logs cleared." }); }
+    if (action === "reset-processed") { g.felix_processedMessageIds = new Set(); return NextResponse.json({ success: true, message: "Processed message IDs reset." }); }
     if (action === "update-prompt") {
-      if (prompt && typeof prompt === "string") { systemPrompt = prompt.trim(); return NextResponse.json({ success: true, message: "System prompt updated." }); }
+      if (prompt && typeof prompt === "string") { g.felix_systemPrompt = prompt.trim(); return NextResponse.json({ success: true, message: "System prompt updated." }); }
       return NextResponse.json({ error: "prompt field required." }, { status: 400 });
     }
 

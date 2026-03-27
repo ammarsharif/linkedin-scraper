@@ -13,6 +13,7 @@ import {
   Share2,
   Target,
   Facebook,
+  Instagram,
   ChevronDown,
   LayoutGrid,
   AlertTriangle
@@ -30,6 +31,7 @@ export const BOTS = [
   { id: "cora", name: "Cora", desc: "Content Repurposing", path: "/cora", icon: Share2, color: "#fbbf24", bg: "rgba(251,191,36,0.1)" },
   { id: "febo", name: "Febo", desc: "Sales Scripts & FB Engagement", path: "/febo", icon: Target, color: "#6366f1", bg: "rgba(99,102,241,0.1)" },
   { id: "felix", name: "Felix", desc: "FB Inbox Auto-Reply", path: "/felix", icon: Facebook, color: "#3b82f6", bg: "rgba(59,130,246,0.1)" },
+  { id: "instar", name: "Instar", desc: "Instagram Growth Bot", path: "/instar", icon: Instagram, color: "#e1306c", bg: "rgba(225,48,108,0.1)" },
 ];
 
 export function BotSwitcher({ currentBotId }: { currentBotId: string }) {

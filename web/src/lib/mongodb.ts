@@ -38,6 +38,64 @@ export async function getDatabase(): Promise<Db> {
   }
 }
 
+// ── Instar (Instagram) Interfaces ─────────────────────────────────────────
+
+export interface InstarConfig {
+  _id?: string;
+  type: "ig_session";
+  sessionid: string;
+  ds_user_id: string;
+  csrftoken: string;
+  mid?: string;
+  username?: string;
+  rawCookies?: string;
+  savedAt: string;
+  status: "active" | "expired";
+}
+
+export interface InstarChatMessage {
+  role: "prospect" | "instar" | "human_rep";
+  text: string;
+  timestamp: string;
+  source: "ig_inbox" | "instar_auto" | "instar_cron" | "manual";
+}
+
+export interface InstarConversationLog {
+  _id?: string;
+  threadId: string;
+  senderUsername: string;
+  senderId?: string;
+  lastActivity: string;
+  createdAt: string;
+  messages: InstarChatMessage[];
+}
+
+export interface InstarGrowthLog {
+  _id?: string;
+  action: "follow" | "like" | "comment" | "story_view" | "dm" | "post";
+  targetUsername?: string;
+  targetPostUrl?: string;
+  hashtag?: string;
+  content?: string;
+  timestamp: string;
+  status: "success" | "failed" | "skipped";
+  error?: string;
+}
+
+export interface InstarSettings {
+  _id?: string;
+  type: "growth_settings";
+  targetHashtags: string[];
+  dailyFollowLimit: number;
+  dailyLikeLimit: number;
+  dailyCommentLimit: number;
+  autoReplyEnabled: boolean;
+  systemPrompt: string;
+  dmSystemPrompt: string;
+  commentPrompt: string;
+  lastUpdated: string;
+}
+
 // ── Collection Interfaces ─────────────────────────────────────────────────
 
 export interface StoredProfile {

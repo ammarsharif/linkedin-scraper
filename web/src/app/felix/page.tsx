@@ -158,7 +158,7 @@ export default function FelixPage() {
   useEffect(() => {
     if (!checking) {
       fetchCronStatus();
-      const interval = setInterval(fetchCronStatus, 5000);
+      const interval = setInterval(fetchCronStatus, 30000);
       return () => clearInterval(interval);
     }
   }, [checking, fetchCronStatus]);

@@ -133,6 +133,7 @@ async function cronTick(cookieString: string) {
     return;
   }
 
+  if (!cronRunning) return;
   lastCronRun = new Date().toISOString();
   addCronLog("Checking for unread messages...", "info");
 
@@ -175,6 +176,10 @@ async function cronTick(cookieString: string) {
     let newMessages = 0;
 
     for (const conv of elements) {
+      if (!cronRunning) {
+        addCronLog("Cron stopped mid-execution. Aborting early.", "warning");
+        return;
+      }
       if (!conv.unreadCount || conv.unreadCount === 0) continue;
       if (conv.read === true) continue;
 

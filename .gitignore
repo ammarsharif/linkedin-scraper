@@ -49,3 +49,7 @@ node_modules/
 web/.next/
 web/fb_puppeteer_profile/
 fb_puppeteer_profile/
+web/ig_puppeteer_profile/
+ig_puppeteer_profile/
+web/ig_puppeteer_profile_grow/
+ig_puppeteer_profile_grow/
