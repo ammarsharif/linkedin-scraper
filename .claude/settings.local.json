@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find 'd:\\\\Devs Colab\\\\linkedin_scraper\\\\web\\\\src' -type f -name *puppeteer* -o -name *auth* -o -name *session*)",
+      "Bash(grep -E \"\\\\.\\(ts|js\\)$\")",
+      "Bash(find \"d:/Devs Colab/linkedin_scraper/web/src/app/api/febo\" -name \"route.ts\" -exec head -100 {} +)"
+    ]
+  }
+}

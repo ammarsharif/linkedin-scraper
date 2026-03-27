@@ -6,15 +6,11 @@ import {
   MessageSquare,
   Zap,
   RefreshCw,
-  CheckCircle2,
-  Copy,
   Power,
   Terminal,
   ChevronDown,
   ChevronUp,
   Clock,
-  Send,
-  Inbox,
   Bot,
   AlertCircle,
   Play,
@@ -25,32 +21,20 @@ import {
   Save,
   Key,
   History,
+  LogOut,
+  ShieldCheck,
+  ShieldAlert,
+  ShieldOff,
+  CalendarClock,
+  User,
 } from "lucide-react";
 
 import { BotSwitcher } from "@/components/BotSwitcher";
-
-interface FbMessage {
-  threadId: string;
-  messageText: string;
-  senderName: string;
-  senderId: string;
-  timestamp: number;
-  status: string;
-}
 
 interface CronLogEntry {
   time: string;
   message: string;
   type: "info" | "success" | "error" | "warning";
-}
-
-interface ProcessedReply {
-  senderName: string;
-  messageText: string;
-  reply: string;
-  threadId: string;
-  sentAt: string;
-  sent: boolean;
 }
 
 interface ConversationLog {
@@ -68,15 +52,22 @@ interface ConversationLog {
   }[];
 }
 
+interface FbSession {
+  exists: boolean;
+  c_user?: string;
+  savedAt?: string;
+  status?: "active" | "expired";
+}
+
 const FELIX_GRADIENT = "linear-gradient(135deg, #3b82f6, #1d4ed8, #60a5fa)";
 const FELIX_COLOR = "#3b82f6";
 
-type TabId = "auto-reply" | "logs";
+type TabId = "fb-auth" | "auto-reply" | "logs";
 
 export default function FelixPage() {
   const router = useRouter();
   const [checking, setChecking] = useState(true);
-  const [activeTab, setActiveTab] = useState<TabId>("auto-reply");
+  const [activeTab, setActiveTab] = useState<TabId>("fb-auth");
   const [toast, setToast] = useState<{
     message: string;
     type: "success" | "error";
@@ -102,6 +93,13 @@ export default function FelixPage() {
   const [logsLoading, setLogsLoading] = useState(false);
   const [expandedLog, setExpandedLog] = useState<string | null>(null);
 
+  // FB Session state
+  const [fbSession, setFbSession] = useState<FbSession>({ exists: false });
+  const [fbSessionLoading, setFbSessionLoading] = useState(false);
+  const [rawCookies, setRawCookies] = useState("");
+  const [fbDtsg, setFbDtsg] = useState("");
+  const [clearingSession, setClearingSession] = useState(false);
+
   const showToast = useCallback(
     (message: string, type: "success" | "error") => {
       setToast({ message, type });
@@ -110,7 +108,7 @@ export default function FelixPage() {
     []
   );
 
-  // ── Auth check ──
+  // ── LinkedIn auth check ───────────────────────────────────────────────────
   useEffect(() => {
     fetch("/api/auth")
       .then((r) => r.json())
@@ -121,7 +119,28 @@ export default function FelixPage() {
       .finally(() => setChecking(false));
   }, [router]);
 
-  // ── Cron status polling ──
+  // ── Load FB session from DB ───────────────────────────────────────────────
+  const loadFbSession = useCallback(async () => {
+    try {
+      const res = await fetch("/api/felix");
+      const data = await res.json();
+      const session: FbSession = data.session ?? { exists: false };
+      setFbSession(session);
+      if (data.logs) setConvLogs(data.logs);
+      // Auto-navigate to auto-reply tab if session is already active
+      if (session.exists && session.status === "active") {
+        setActiveTab("auto-reply");
+      }
+    } catch {
+      setFbSession({ exists: false });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!checking) loadFbSession();
+  }, [checking, loadFbSession]);
+
+  // ── Cron status polling ───────────────────────────────────────────────────
   const fetchCronStatus = useCallback(async () => {
     try {
       const res = await fetch("/api/felix/inbox/cron");
@@ -150,15 +169,13 @@ export default function FelixPage() {
     }
   }, [cronLogs, showCronLogs]);
 
-  // ── Fetch conversation logs ──
+  // ── Fetch conversation logs ───────────────────────────────────────────────
   const fetchLogs = useCallback(async () => {
     setLogsLoading(true);
     try {
       const res = await fetch("/api/felix");
       const data = await res.json();
-      if (res.ok && data.success) {
-        setConvLogs(data.logs || []);
-      }
+      if (data.logs) setConvLogs(data.logs);
     } catch {
       /* silent */
     } finally {
@@ -170,8 +187,64 @@ export default function FelixPage() {
     if (!checking && activeTab === "logs") fetchLogs();
   }, [checking, activeTab, fetchLogs]);
 
-  // ── Toggle cron ──
+  // ── Save FB session ───────────────────────────────────────────────────────
+  const saveFbSession = async () => {
+    if (!rawCookies.trim()) {
+      showToast("Paste your Facebook cookie string first.", "error");
+      return;
+    }
+    setFbSessionLoading(true);
+    try {
+      const res = await fetch("/api/felix", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rawCookies: rawCookies.trim(),
+          ...(fbDtsg.trim() ? { fb_dtsg: fbDtsg.trim() } : {}),
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setRawCookies("");
+        setFbDtsg("");
+        showToast("Facebook session saved successfully.", "success");
+        await loadFbSession();
+      } else {
+        showToast(data.error || "Failed to save session.", "error");
+      }
+    } catch {
+      showToast("Network error saving session.", "error");
+    } finally {
+      setFbSessionLoading(false);
+    }
+  };
+
+  // ── Clear FB session ──────────────────────────────────────────────────────
+  const clearFbSession = async () => {
+    setClearingSession(true);
+    try {
+      const res = await fetch("/api/felix", { method: "DELETE" });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setFbSession({ exists: false });
+        showToast("Facebook session cleared.", "success");
+      } else {
+        showToast(data.error || "Failed to clear session.", "error");
+      }
+    } catch {
+      showToast("Network error clearing session.", "error");
+    } finally {
+      setClearingSession(false);
+    }
+  };
+
+  // ── Toggle cron ───────────────────────────────────────────────────────────
   const toggleCron = async () => {
+    if (!cronRunning && !fbSession.exists) {
+      showToast("Set up your Facebook session first.", "error");
+      setActiveTab("fb-auth");
+      return;
+    }
     setCronLoading(true);
     const action = cronRunning ? "stop" : "start";
     try {
@@ -184,10 +257,10 @@ export default function FelixPage() {
       if (data.success) {
         setCronRunning(action === "start");
         showToast(
-           action === "start"
-             ? "Auto-reply cron started! Checking every 60s."
-             : "Auto-reply cron stopped.",
-           "success"
+          action === "start"
+            ? "Auto-reply cron started — checking every 60s."
+            : "Auto-reply cron stopped.",
+          "success"
         );
         fetchCronStatus();
       } else {
@@ -240,11 +313,6 @@ export default function FelixPage() {
     }
   };
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-    showToast("Copied to clipboard!", "success");
-  };
-
   const formatTime = (iso: string) => {
     try {
       return new Date(iso).toLocaleTimeString("en-US", {
@@ -257,30 +325,69 @@ export default function FelixPage() {
     }
   };
 
-  const formatRelative = (ts: number) => {
-    const diff = Date.now() - ts;
-    const mins = Math.floor(diff / 60000);
-    if (mins < 1) return "Just now";
-    if (mins < 60) return `${mins}m ago`;
-    const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return `${hrs}h ago`;
-    return `${Math.floor(hrs / 24)}d ago`;
+  const formatDate = (iso: string) => {
+    try {
+      return new Date(iso).toLocaleString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    } catch {
+      return iso;
+    }
   };
 
   const logTypeColor = (type: CronLogEntry["type"]) => {
     switch (type) {
       case "success": return "#34d399";
-      case "error": return "#f87171";
+      case "error":   return "#f87171";
       case "warning": return "#fbbf24";
-      default: return "#94a3b8";
+      default:        return "#94a3b8";
     }
+  };
+
+  const sessionStatusConfig = () => {
+    if (!fbSession.exists) {
+      return {
+        icon: <ShieldOff size={18} />,
+        label: "Not Connected",
+        desc: "No Facebook session found. Connect to enable auto-reply.",
+        color: "#6b7280",
+        bg: "rgba(107,114,128,0.08)",
+        border: "rgba(107,114,128,0.2)",
+      };
+    }
+    if (fbSession.status === "expired") {
+      return {
+        icon: <ShieldAlert size={18} />,
+        label: "Session Expired",
+        desc: "Your Facebook cookies have expired. Please reconnect with fresh cookies.",
+        color: "#f87171",
+        bg: "rgba(239,68,68,0.08)",
+        border: "rgba(239,68,68,0.2)",
+      };
+    }
+    return {
+      icon: <ShieldCheck size={18} />,
+      label: "Connected",
+      desc: `Authenticated as UID ${fbSession.c_user}. Session is active.`,
+      color: "#34d399",
+      bg: "rgba(52,211,153,0.08)",
+      border: "rgba(52,211,153,0.2)",
+    };
   };
 
   if (checking) return null;
 
-  const tabs: { id: TabId; label: string; icon: React.ReactNode; count?: number }[] = [
-    { id: "auto-reply", label: "Auto-Reply Tracker", icon: <Bot size={15} /> },
-    { id: "logs", label: "Conversation Logs", icon: <History size={15} />, count: convLogs.length },
+  const sessionStatus = sessionStatusConfig();
+  const isConnected = fbSession.exists && fbSession.status !== "expired";
+
+  const tabs: { id: TabId; label: string; icon: React.ReactNode; count?: number; alert?: boolean }[] = [
+    { id: "fb-auth",    label: "Facebook Auth",        icon: <Key size={15} />,           alert: !isConnected },
+    { id: "auto-reply", label: "Auto-Reply",            icon: <Bot size={15} /> },
+    { id: "logs",       label: "Conversation Logs",     icon: <History size={15} />,       count: convLogs.length },
   ];
 
   return (
@@ -341,18 +448,31 @@ export default function FelixPage() {
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Cron Status Pill */}
+            {/* Session pill */}
+            <div
+              className="hidden sm:flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg border"
+              style={{
+                background: sessionStatus.bg,
+                borderColor: sessionStatus.border,
+                color: sessionStatus.color,
+              }}
+            >
+              {sessionStatus.icon}
+              <span className="font-semibold">{sessionStatus.label}</span>
+            </div>
+
+            <div style={{ width: 1, height: 20, background: "rgba(255,255,255,0.08)" }} />
+
+            {/* Cron toggle */}
             <button
               onClick={toggleCron}
               disabled={cronLoading}
-              id="cron-toggle-btn"
               className="flex items-center gap-2.5 text-sm px-4 py-2 rounded-xl font-semibold transition-all cursor-pointer border disabled:opacity-60"
               style={{
                 background: cronRunning ? "rgba(239,68,68,0.08)" : "rgba(59,130,246,0.1)",
                 borderColor: cronRunning ? "rgba(239,68,68,0.2)" : "rgba(59,130,246,0.3)",
                 color: cronRunning ? "#ef4444" : FELIX_COLOR,
               }}
-              title={cronRunning ? "Click to stop auto-reply cron" : "Click to start auto-reply cron (every 60s)"}
             >
               {cronLoading ? (
                 <RefreshCw size={14} className="animate-spin" />
@@ -363,8 +483,6 @@ export default function FelixPage() {
               )}
               <span>{cronRunning ? "Stop Cron" : "Start Cron"}</span>
             </button>
-
-            <div style={{ width: 1, height: 20, background: "rgba(255,255,255,0.08)" }} />
 
             <div className="flex items-center gap-2 text-xs text-gray-500">
               <Clock size={12} />
@@ -386,7 +504,6 @@ export default function FelixPage() {
           {tabs.map((tab) => (
             <button
               key={tab.id}
-              id={`tab-${tab.id}`}
               onClick={() => setActiveTab(tab.id)}
               className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer"
               style={{
@@ -397,6 +514,9 @@ export default function FelixPage() {
             >
               {tab.icon}
               {tab.label}
+              {tab.alert && (
+                <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+              )}
               {tab.count !== undefined && tab.count > 0 && (
                 <span
                   className="ml-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold"
@@ -416,7 +536,253 @@ export default function FelixPage() {
       {/* MAIN CONTENT */}
       <main className="relative z-10 mx-auto max-w-7xl px-6 py-6">
 
-        {/* ─────────────────── AUTO-REPLY TAB ─────────────────── */}
+        {/* ──────────────────── FACEBOOK AUTH TAB ──────────────────── */}
+        {activeTab === "fb-auth" && (
+          <div className="animate-fade-in max-w-2xl mx-auto">
+            <div className="mb-8">
+              <h1 className="text-2xl font-extrabold tracking-tight text-white mb-2">
+                Facebook{" "}
+                <span className="bg-clip-text text-transparent" style={{ backgroundImage: FELIX_GRADIENT }}>
+                  Authentication
+                </span>
+              </h1>
+              <p className="text-sm" style={{ color: "#5a5e72" }}>
+                Felix needs your Facebook session cookies to access Messenger.
+                Credentials are stored securely in the database and persist across sessions.
+              </p>
+            </div>
+
+            {/* ── Session status card ── */}
+            <div
+              className="p-5 rounded-2xl border mb-6"
+              style={{
+                background: sessionStatus.bg,
+                borderColor: sessionStatus.border,
+              }}
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <div
+                    className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+                    style={{ background: `${sessionStatus.bg}`, color: sessionStatus.color }}
+                  >
+                    {sessionStatus.icon}
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold" style={{ color: sessionStatus.color }}>
+                      {sessionStatus.label}
+                    </p>
+                    <p className="text-xs mt-0.5" style={{ color: "#5a5e72" }}>
+                      {sessionStatus.desc}
+                    </p>
+                    {fbSession.exists && fbSession.savedAt && (
+                      <div className="flex items-center gap-1.5 mt-2">
+                        <CalendarClock size={11} style={{ color: "#4b5268" }} />
+                        <span className="text-[11px]" style={{ color: "#4b5268" }}>
+                          Saved {formatDate(fbSession.savedAt)}
+                        </span>
+                      </div>
+                    )}
+                    {fbSession.exists && fbSession.c_user && (
+                      <div className="flex items-center gap-1.5 mt-1">
+                        <User size={11} style={{ color: "#4b5268" }} />
+                        <span className="text-[11px]" style={{ color: "#4b5268" }}>
+                          UID: {fbSession.c_user}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {fbSession.exists && (
+                  <button
+                    onClick={clearFbSession}
+                    disabled={clearingSession}
+                    className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg border cursor-pointer transition-all shrink-0 disabled:opacity-50"
+                    style={{
+                      background: "rgba(239,68,68,0.08)",
+                      borderColor: "rgba(239,68,68,0.2)",
+                      color: "#f87171",
+                    }}
+                  >
+                    {clearingSession ? (
+                      <RefreshCw size={12} className="animate-spin" />
+                    ) : (
+                      <LogOut size={12} />
+                    )}
+                    Disconnect
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* ── Cookie input form ── */}
+            <div
+              className="p-6 rounded-2xl border mb-6"
+              style={{
+                background: "rgba(0,0,0,0.3)",
+                borderColor: "rgba(255,255,255,0.06)",
+              }}
+            >
+              <h3 className="text-sm font-bold text-white mb-1">
+                {fbSession.exists ? "Update Cookies" : "Connect Your Account"}
+              </h3>
+              <p className="text-xs mb-5" style={{ color: "#5a5e72" }}>
+                {fbSession.exists
+                  ? "Paste fresh Facebook cookies to refresh your session."
+                  : "Paste your Facebook cookie string below to authenticate Felix."}
+              </p>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="flex items-center gap-2 text-xs font-semibold text-gray-400 mb-2">
+                    <Key size={12} style={{ color: FELIX_COLOR }} />
+                    Raw Cookie String
+                    <span
+                      className="text-[10px] px-1.5 py-0.5 rounded font-normal"
+                      style={{ background: "rgba(59,130,246,0.1)", color: FELIX_COLOR }}
+                    >
+                      required
+                    </span>
+                  </label>
+                  <textarea
+                    value={rawCookies}
+                    onChange={(e) => setRawCookies(e.target.value)}
+                    rows={5}
+                    placeholder="c_user=123456789; xs=AbCdEf12:gh...; datr=xyz...; sb=...; fr=..."
+                    className="w-full rounded-xl px-4 py-3 text-xs font-mono outline-none resize-none border transition-all"
+                    style={{
+                      background: "rgba(0,0,0,0.5)",
+                      borderColor: rawCookies ? "rgba(59,130,246,0.3)" : "rgba(255,255,255,0.08)",
+                      color: "#e5e7eb",
+                    }}
+                  />
+                  <p className="text-[11px] mt-1.5" style={{ color: "#4b5268" }}>
+                    Must include <code className="text-blue-400/80">c_user</code> and <code className="text-blue-400/80">xs</code>. Also include <code className="text-blue-400/80">datr</code>, <code className="text-blue-400/80">sb</code>, <code className="text-blue-400/80">fr</code> for best results.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="flex items-center gap-2 text-xs font-semibold text-gray-400 mb-2">
+                    <Zap size={12} style={{ color: FELIX_COLOR }} />
+                    fb_dtsg Token
+                    <span
+                      className="text-[10px] px-1.5 py-0.5 rounded font-normal"
+                      style={{ background: "rgba(255,255,255,0.04)", color: "#6b7280" }}
+                    >
+                      optional
+                    </span>
+                  </label>
+                  <input
+                    value={fbDtsg}
+                    onChange={(e) => setFbDtsg(e.target.value)}
+                    placeholder="AQH..."
+                    className="w-full rounded-xl px-4 py-3 text-xs font-mono outline-none border transition-all"
+                    style={{
+                      background: "rgba(0,0,0,0.5)",
+                      borderColor: "rgba(255,255,255,0.08)",
+                      color: "#e5e7eb",
+                    }}
+                  />
+                  <p className="text-[11px] mt-1.5" style={{ color: "#4b5268" }}>
+                    Find in Facebook page source: search for <code className="text-blue-400/80">&quot;dtsg&quot;</code>. Needed for some API calls.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={saveFbSession}
+                disabled={fbSessionLoading || !rawCookies.trim()}
+                className="mt-5 flex items-center gap-2 px-6 py-2.5 rounded-xl font-bold text-sm border transition-all cursor-pointer disabled:opacity-50"
+                style={{
+                  background: "rgba(59,130,246,0.12)",
+                  borderColor: "rgba(59,130,246,0.3)",
+                  color: FELIX_COLOR,
+                }}
+              >
+                {fbSessionLoading ? (
+                  <RefreshCw size={14} className="animate-spin" />
+                ) : (
+                  <Save size={14} />
+                )}
+                {fbSession.exists ? "Update Session" : "Save & Connect"}
+              </button>
+            </div>
+
+            {/* ── How to get cookies ── */}
+            <div
+              className="p-6 rounded-2xl border"
+              style={{
+                background: "rgba(0,0,0,0.2)",
+                borderColor: "rgba(255,255,255,0.06)",
+              }}
+            >
+              <h3 className="text-sm font-bold text-gray-300 mb-4 flex items-center gap-2">
+                <Terminal size={14} style={{ color: FELIX_COLOR }} />
+                How to Extract Your Cookies
+              </h3>
+              <div className="space-y-2.5">
+                {[
+                  {
+                    step: "1",
+                    title: "Open Facebook & log in",
+                    desc: "Go to facebook.com in Chrome or Edge and make sure you're signed in.",
+                  },
+                  {
+                    step: "2",
+                    title: "Open DevTools",
+                    desc: "Press F12 → Application tab → Storage → Cookies → https://www.facebook.com",
+                  },
+                  {
+                    step: "3",
+                    title: "Copy cookie values",
+                    desc: 'Find c_user, xs, datr, sb, fr. Right-click the URL → "Copy all as header value" or manually assemble: c_user=VALUE; xs=VALUE; ...',
+                  },
+                  {
+                    step: "4",
+                    title: "Paste & save",
+                    desc: "Paste the cookie string above and click Save & Connect. Your session is stored in the database and lasts until Facebook invalidates the cookies.",
+                  },
+                ].map((item) => (
+                  <div
+                    key={item.step}
+                    className="flex items-start gap-3 p-3 rounded-xl"
+                    style={{
+                      background: "rgba(255,255,255,0.02)",
+                      border: "1px solid rgba(255,255,255,0.04)",
+                    }}
+                  >
+                    <div
+                      className="w-6 h-6 rounded-lg flex items-center justify-center shrink-0 text-xs font-black"
+                      style={{
+                        background: "rgba(59,130,246,0.12)",
+                        color: FELIX_COLOR,
+                        border: "1px solid rgba(59,130,246,0.2)",
+                      }}
+                    >
+                      {item.step}
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold text-gray-200">{item.title}</p>
+                      <p className="text-[11px] text-gray-500 mt-0.5 leading-relaxed">{item.desc}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div
+                className="mt-4 flex items-start gap-2 p-3 rounded-xl"
+                style={{ background: "rgba(251,191,36,0.06)", border: "1px solid rgba(251,191,36,0.15)" }}
+              >
+                <AlertCircle size={13} className="text-amber-400 shrink-0 mt-0.5" />
+                <p className="text-[11px] text-amber-400/80 leading-relaxed">
+                  Facebook cookies expire when you log out or after a period of inactivity. If the cron starts showing login errors in the activity log, come back here and refresh your cookies.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ──────────────────── AUTO-REPLY TAB ──────────────────── */}
         {activeTab === "auto-reply" && (
           <div className="animate-fade-in max-w-3xl mx-auto">
             <div className="mb-8">
@@ -431,6 +797,36 @@ export default function FelixPage() {
                 messages and automatically generates &amp; sends professional replies.
               </p>
             </div>
+
+            {/* No session warning */}
+            {!isConnected && (
+              <div
+                className="flex items-center gap-3 p-4 rounded-xl border mb-6"
+                style={{
+                  background: "rgba(251,191,36,0.06)",
+                  borderColor: "rgba(251,191,36,0.2)",
+                }}
+              >
+                <AlertCircle size={16} className="text-amber-400 shrink-0" />
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-amber-400">Facebook session required</p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Connect your Facebook account before starting the cron.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setActiveTab("fb-auth")}
+                  className="text-xs px-3 py-1.5 rounded-lg border cursor-pointer"
+                  style={{
+                    background: "rgba(251,191,36,0.1)",
+                    borderColor: "rgba(251,191,36,0.25)",
+                    color: "#fbbf24",
+                  }}
+                >
+                  Connect
+                </button>
+              </div>
+            )}
 
             {/* Status Card */}
             <div
@@ -457,11 +853,11 @@ export default function FelixPage() {
                   </div>
                   <div>
                     <h3 className="text-lg font-bold text-white">
-                      {cronRunning ? "Cron is Active" : "Cron is Off"}
+                      {cronRunning ? "Cron Active" : "Cron Stopped"}
                     </h3>
                     <p className="text-sm text-gray-500">
                       {cronRunning
-                        ? "Auto-replying to new messages every 60 seconds."
+                        ? "Checking for new messages every 60 seconds."
                         : "Start the cron to enable automatic replies."}
                     </p>
                   </div>
@@ -469,7 +865,6 @@ export default function FelixPage() {
                 <button
                   onClick={toggleCron}
                   disabled={cronLoading}
-                  id="cron-toggle-main-btn"
                   className="px-6 py-3 rounded-xl font-bold text-sm transition-all cursor-pointer disabled:opacity-50 flex items-center gap-2 border"
                   style={{
                     background: cronRunning ? "rgba(239,68,68,0.08)" : "rgba(59,130,246,0.1)",
@@ -480,7 +875,7 @@ export default function FelixPage() {
                   {cronLoading ? (
                     <RefreshCw size={16} className="animate-spin" />
                   ) : cronRunning ? (
-                    <><Square size={16} /> Stop Cron</>
+                    <><Square size={16} /> Stop</>
                   ) : (
                     <><Play size={16} /> Start Cron</>
                   )}
@@ -511,7 +906,6 @@ export default function FelixPage() {
                 </div>
               </div>
 
-              {/* Actions */}
               <div className="flex items-center gap-3 mt-4">
                 <button
                   onClick={resetProcessed}
@@ -528,7 +922,7 @@ export default function FelixPage() {
               </div>
             </div>
 
-            {/* System Prompt Customization */}
+            {/* System Prompt */}
             <div
               className="p-6 rounded-2xl border mb-6"
               style={{
@@ -536,7 +930,7 @@ export default function FelixPage() {
                 borderColor: "rgba(255,255,255,0.06)",
               }}
             >
-              <h3 className="text-sm font-bold text-gray-300 mb-3 flex items-center gap-2">
+              <h3 className="text-sm font-bold text-gray-300 mb-1 flex items-center gap-2">
                 <Bot size={14} style={{ color: FELIX_COLOR }} />
                 AI System Prompt
               </h3>
@@ -547,7 +941,6 @@ export default function FelixPage() {
                 value={systemPrompt}
                 onChange={(e) => setSystemPrompt(e.target.value)}
                 rows={4}
-                id="system-prompt-input"
                 className="w-full rounded-xl px-4 py-3 text-sm outline-none resize-none mb-3 border transition-all"
                 style={{
                   background: "rgba(0,0,0,0.4)",
@@ -570,9 +963,9 @@ export default function FelixPage() {
               </button>
             </div>
 
-            {/* Cron Logs */}
+            {/* Cron Activity Log */}
             <div
-              className="p-6 rounded-2xl border mb-6"
+              className="p-6 rounded-2xl border"
               style={{
                 background: "rgba(0,0,0,0.2)",
                 borderColor: "rgba(255,255,255,0.06)",
@@ -584,7 +977,7 @@ export default function FelixPage() {
               >
                 <h3 className="text-sm font-bold text-gray-300 flex items-center gap-2">
                   <Terminal size={14} style={{ color: FELIX_COLOR }} />
-                  Cron Activity Log
+                  Activity Log
                   <span
                     className="px-1.5 py-0.5 rounded text-[10px] font-bold"
                     style={{ background: "rgba(59,130,246,0.1)", color: FELIX_COLOR }}
@@ -592,7 +985,11 @@ export default function FelixPage() {
                     {cronLogs.length}
                   </span>
                 </h3>
-                {showCronLogs ? <ChevronUp size={16} className="text-gray-500" /> : <ChevronDown size={16} className="text-gray-500" />}
+                {showCronLogs ? (
+                  <ChevronUp size={16} className="text-gray-500" />
+                ) : (
+                  <ChevronDown size={16} className="text-gray-500" />
+                )}
               </button>
 
               {showCronLogs && (
@@ -604,7 +1001,10 @@ export default function FelixPage() {
                     <p className="text-gray-600 text-center py-4">No log entries yet.</p>
                   ) : (
                     cronLogs.map((entry, i) => (
-                      <div key={i} className="flex items-start gap-2 py-1 border-b border-white/5 last:border-0">
+                      <div
+                        key={i}
+                        className="flex items-start gap-2 py-1 border-b border-white/5 last:border-0"
+                      >
                         <span className="text-gray-600 shrink-0">{formatTime(entry.time)}</span>
                         <span style={{ color: logTypeColor(entry.type) }}>{entry.message}</span>
                       </div>
@@ -614,72 +1014,10 @@ export default function FelixPage() {
                 </div>
               )}
             </div>
-
-            {/* How it works */}
-            <div
-              className="p-6 rounded-2xl border"
-              style={{
-                background: "rgba(0,0,0,0.2)",
-                borderColor: "rgba(255,255,255,0.06)",
-              }}
-            >
-              <h3 className="text-sm font-bold text-gray-300 mb-4 flex items-center gap-2">
-                <Zap size={14} style={{ color: FELIX_COLOR }} />
-                How Auto-Reply Works
-              </h3>
-              <div className="space-y-3">
-                {[
-                  {
-                    step: "1",
-                    title: "Authenticate",
-                    desc: "Felix uses your c_user and xs browser cookies to maintain an active Facebook session.",
-                  },
-                  {
-                    step: "2",
-                    title: "Fetch Inbox",
-                    desc: "Every 60 seconds, Felix calls Facebook's internal GraphQL API to fetch unread Messenger threads.",
-                  },
-                  {
-                    step: "3",
-                    title: "Generate AI Reply",
-                    desc: "OpenAI generates a professional, warm, and brief reply using your customized system prompt.",
-                  },
-                  {
-                    step: "4",
-                    title: "Send & Log",
-                    desc: "The reply is sent via Facebook's internal API and the conversation is logged to MongoDB.",
-                  },
-                ].map((item) => (
-                  <div
-                    key={item.step}
-                    className="flex items-start gap-3 p-3 rounded-xl"
-                    style={{
-                      background: "rgba(255,255,255,0.02)",
-                      border: "1px solid rgba(255,255,255,0.04)",
-                    }}
-                  >
-                    <div
-                      className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 text-xs font-black"
-                      style={{
-                        background: "rgba(59,130,246,0.12)",
-                        color: FELIX_COLOR,
-                        border: "1px solid rgba(59,130,246,0.2)",
-                      }}
-                    >
-                      {item.step}
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold text-gray-200">{item.title}</p>
-                      <p className="text-xs text-gray-500 mt-0.5">{item.desc}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
           </div>
         )}
 
-        {/* ─────────────────── LOGS TAB ─────────────────── */}
+        {/* ──────────────────── LOGS TAB ──────────────────── */}
         {activeTab === "logs" && (
           <div className="animate-fade-in">
             <div className="flex items-center justify-between mb-6">
@@ -697,7 +1035,6 @@ export default function FelixPage() {
               <button
                 onClick={fetchLogs}
                 disabled={logsLoading}
-                id="refresh-logs-btn"
                 className="flex items-center gap-2 text-sm px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 font-medium transition-all border border-white/10 cursor-pointer disabled:opacity-50"
               >
                 <RefreshCw size={14} className={logsLoading ? "animate-spin" : ""} />
@@ -724,7 +1061,9 @@ export default function FelixPage() {
                   <MessageSquare size={36} style={{ color: FELIX_COLOR }} />
                 </div>
                 <p className="text-gray-300 text-base font-semibold mb-1">No logs yet</p>
-                <p className="text-gray-500 text-sm">Conversations will appear here after Felix processes messages.</p>
+                <p className="text-gray-500 text-sm">
+                  Conversations will appear here after Felix processes messages.
+                </p>
               </div>
             )}
 
@@ -770,10 +1109,7 @@ export default function FelixPage() {
                       style={{ borderColor: "rgba(255,255,255,0.05)" }}
                     >
                       {(log.messages || []).map((m, i) => (
-                        <div
-                          key={i}
-                          className="flex gap-3 pt-3"
-                        >
+                        <div key={i} className="flex gap-3 pt-3">
                           <div
                             className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black shrink-0 mt-0.5"
                             style={{

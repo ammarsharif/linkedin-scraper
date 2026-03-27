@@ -29,7 +29,7 @@ async function getBrowser(): Promise<Browser> {
   if (!g.felixBrowser || !g.felixBrowser.connected) {
     addCronLog("Starting new Puppeteer browser instance...", "info");
     g.felixBrowser = await puppeteer.launch({
-      headless: false,
+      headless: true,
       userDataDir: "./fb_puppeteer_profile",
       defaultViewport: null,
       args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-notifications", "--window-size=1280,800"]
@@ -296,16 +296,29 @@ export async function POST(req: NextRequest) {
     const { action, prompt } = await req.json();
 
     if (action === "start") {
+      let c_user: string, xs: string, datr: string | null = null;
+
+      // Try browser cookie first, fall back to MongoDB
       const fbSessionRaw = req.cookies.get("fb_session")?.value;
-      if (!fbSessionRaw) return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
+      if (fbSessionRaw) {
+        try {
+          const parsed = JSON.parse(fbSessionRaw);
+          c_user = parsed.c_user; xs = parsed.xs; datr = parsed.datr || null;
+        } catch {
+          return NextResponse.json({ error: "Invalid fb_session cookie format." }, { status: 400 });
+        }
+      } else {
+        const db = await getDatabase();
+        const sessionDoc = await db.collection("felix_config").findOne({ type: "fb_session" });
+        if (!sessionDoc) {
+          return NextResponse.json({ error: "No Facebook session found. Please authenticate in the Facebook Auth tab." }, { status: 401 });
+        }
+        c_user = sessionDoc.c_user as string;
+        xs = sessionDoc.xs as string;
+        datr = (sessionDoc.datr as string) || null;
+      }
 
-      let c_user: string, xs: string, datr: string | null;
-      try {
-        const parsed = JSON.parse(fbSessionRaw);
-        c_user = parsed.c_user; xs = parsed.xs; datr = parsed.datr || null;
-      } catch { return NextResponse.json({ error: "Invalid fb_session cookie format." }, { status: 400 }); }
-
-      if (!c_user || !xs) return NextResponse.json({ error: "fb_session incomplete (missing c_user or xs)." }, { status: 401 });
+      if (!c_user || !xs) return NextResponse.json({ error: "Session incomplete (missing c_user or xs)." }, { status: 401 });
       if (cronRunning) return NextResponse.json({ success: true, message: "Cron is already running.", running: true });
 
       startCron(c_user, xs, datr);
