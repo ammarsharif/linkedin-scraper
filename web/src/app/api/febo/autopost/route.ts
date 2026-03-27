@@ -9,7 +9,7 @@ const g = globalThis as unknown as { feboPostBrowser?: Browser };
 async function getPostBrowser(): Promise<Browser> {
   if (!g.feboPostBrowser || !g.feboPostBrowser.connected) {
     g.feboPostBrowser = await puppeteer.launch({
-      headless: false,
+      headless: true,
       userDataDir: "./fb_puppeteer_profile",
       defaultViewport: { width: 1280, height: 900 },
       args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-notifications"],

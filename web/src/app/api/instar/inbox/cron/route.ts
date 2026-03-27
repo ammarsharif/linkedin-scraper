@@ -40,7 +40,7 @@ async function getBrowser(): Promise<Browser> {
   if (!g.instarBrowser || !g.instarBrowser.connected) {
     addCronLog("Starting new Puppeteer browser for Instagram...", "info");
     g.instarBrowser = await puppeteer.launch({
-      headless: false,
+      headless: true,
       userDataDir: "./ig_puppeteer_profile",
       defaultViewport: null,
       args: [
@@ -211,37 +211,19 @@ async function fetchThreadMessages(
  * Returns true on success.
  */
 async function sendReply(page: Page, reply: string): Promise<boolean> {
-  const textboxSelector = 'div[contenteditable="true"][role="textbox"]';
-
+  // Use broad selector – Instagram may or may not have role="textbox"
+  const textboxSelector = 'div[contenteditable="true"]';
   try {
-    await page.waitForSelector(textboxSelector, { timeout: 12000 });
+    await page.waitForSelector(textboxSelector, { timeout: 15000 });
     await page.click(textboxSelector);
     await new Promise((r) => setTimeout(r, 400));
     await page.keyboard.type(reply, { delay: 30 });
     await page.keyboard.press("Enter");
     await new Promise((r) => setTimeout(r, 2000));
     return true;
-  } catch {
-    // Try clicking the placeholder area and retrying
-    try {
-      await page.evaluate(() => {
-        const placeholder = document.querySelector(
-          '[placeholder*="essage"], [aria-label*="essage"]',
-        ) as HTMLElement;
-        if (placeholder) placeholder.click();
-      });
-      await new Promise((r) => setTimeout(r, 1500));
-      await page.waitForSelector(textboxSelector, { timeout: 8000 });
-      await page.click(textboxSelector);
-      await new Promise((r) => setTimeout(r, 400));
-      await page.keyboard.type(reply, { delay: 30 });
-      await page.keyboard.press("Enter");
-      await new Promise((r) => setTimeout(r, 2000));
-      return true;
-    } catch (e: any) {
-      addCronLog(`Compose box not found: ${e.message}`, "error");
-      return false;
-    }
+  } catch (e: any) {
+    addCronLog(`Compose box not found: ${e.message}`, "error");
+    return false;
   }
 }
 
@@ -254,11 +236,11 @@ async function processThread(
   openai: OpenAI,
   db: any,
   viewerId: string,
-): Promise<void> {
+): Promise<boolean> {
   const cacheKey = thread.threadId + "_" + thread.lastMessage.slice(0, 40);
   if (g.instar_inbox_processedThreadIds.has(cacheKey)) {
     addCronLog(`Already processed: ${thread.senderName}`, "info");
-    return;
+    return false;
   }
 
   addCronLog(`Opening thread: ${thread.senderName}`, "info");
@@ -273,32 +255,39 @@ async function processThread(
     thread.senderName = pageName || "Unknown";
   }
 
-  // Accept request if needed
+  // Accept request via real mouse click (triggers React's event handlers)
   if (thread.isPending && g.instar_inbox_autoAcceptRequests) {
-    const accepted = await page.evaluate(() => {
-      const btns = Array.from(
-        document.querySelectorAll('button, [role="button"]'),
-      ) as HTMLElement[];
-      const acceptBtn = btns.find((b) => {
-        const t = (b.innerText || b.getAttribute("aria-label") || "")
-          .trim()
-          .toLowerCase();
-        return t === "accept" || t === "allow";
+    try {
+      // Get viewport coordinates of the "Accept" element (works for any element type)
+      const coords = await page.evaluate(() => {
+        const all = Array.from(document.querySelectorAll("*")) as HTMLElement[];
+        const btn = all.find(
+          (el) =>
+            el.childElementCount === 0 &&
+            el.textContent?.trim() === "Accept",
+        );
+        if (!btn) return null;
+        const r = btn.getBoundingClientRect();
+        return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
       });
-      if (acceptBtn) {
-        acceptBtn.click();
-        return true;
+
+      if (coords) {
+        await page.mouse.click(coords.x, coords.y); // real native mouse event → React fires
+        addCronLog(`Accepted request from ${thread.senderName}.`, "success");
+        // Wait for compose box to appear (confirms transition to chat view)
+        await page
+          .waitForSelector('div[contenteditable="true"]', { timeout: 15000 })
+          .catch(() =>
+            addCronLog("Compose box slow to appear after accept.", "warning"),
+          );
+      } else {
+        addCronLog(
+          `Accept button not found for ${thread.senderName} – treating as already accepted.`,
+          "warning",
+        );
       }
-      return false;
-    });
-    if (accepted) {
-      addCronLog(`Accepted request from ${thread.senderName}.`, "success");
-      await new Promise((r) => setTimeout(r, 4000));
-    } else {
-      addCronLog(
-        `No Accept button found for ${thread.senderName} – may already be accepted.`,
-        "warning",
-      );
+    } catch (e: any) {
+      addCronLog(`Accept step error: ${e.message}`, "warning");
     }
   }
 
@@ -311,7 +300,7 @@ async function processThread(
 
   if (!incomingText || incomingText.trim().length < 2) {
     addCronLog(`No readable message from ${thread.senderName}.`, "warning");
-    return;
+    return false;
   }
 
   addCronLog(`Generating reply to: "${incomingText.slice(0, 50)}..."`, "info");
@@ -332,7 +321,7 @@ async function processThread(
   const reply = completion.choices[0]?.message?.content?.trim() || "";
   if (!reply) {
     addCronLog("Empty AI reply.", "warning");
-    return;
+    return false;
   }
 
   addCronLog(`Sending reply: "${reply.slice(0, 50)}..."`, "info");
@@ -340,7 +329,7 @@ async function processThread(
 
   if (!sent) {
     addCronLog(`Failed to send reply to ${thread.senderName}.`, "error");
-    return;
+    return false;
   }
 
   // Save to DB
@@ -379,6 +368,7 @@ async function processThread(
 
   g.instar_inbox_processedThreadIds.add(cacheKey);
   addCronLog(`✓ Replied to ${thread.senderName}.`, "success");
+  return true;
 }
 
 // ── Main DM cron tick ──────────────────────────────────────────────────────
@@ -428,9 +418,20 @@ async function dmCronTick(
     await navigateTo(page, "https://www.instagram.com/direct/inbox/");
 
     if (page.url().includes("/accounts/login")) {
-      addCronLog("Session expired – redirected to login.", "error");
-      g.instar_inbox_consecutiveErrors++;
-      return;
+      addCronLog("Session expired – re-injecting cookies and retrying...", "warning");
+      await page.setCookie(
+        { name: "sessionid", value: sessionid, domain: ".instagram.com" },
+        { name: "ds_user_id", value: ds_user_id, domain: ".instagram.com" },
+        { name: "csrftoken", value: csrftoken, domain: ".instagram.com" },
+        ...(mid ? [{ name: "mid", value: mid, domain: ".instagram.com" }] : []),
+      );
+      await navigateTo(page, "https://www.instagram.com/direct/inbox/");
+      if (page.url().includes("/accounts/login")) {
+        addCronLog("Session truly expired – cookies invalid. Update session in settings.", "error");
+        g.instar_inbox_consecutiveErrors++;
+        return;
+      }
+      addCronLog("Session restored successfully.", "success");
     }
 
     // ── Phase 1: Regular inbox – fetch via API ─────────────────────────────
@@ -461,71 +462,44 @@ async function dmCronTick(
       try {
         await processThread(page, thread, openai, db, ds_user_id);
       } catch (err: any) {
-        addCronLog(`Error processing ${senderName}: ${err.message}`, "error");
+        addCronLog(`Error processing inbox thread ${senderName}: ${err.message}`, "error");
       }
     }
 
-    // ── Phase 2: Message requests – click each item and process ───────────
+    // ── Phase 2: Message requests ──────────────────────────────────────────
     if (g.instar_inbox_autoAcceptRequests) {
       addCronLog("Checking message requests...", "info");
 
-      await navigateTo(page, "https://www.instagram.com/direct/requests/");
-      await new Promise((r) => setTimeout(r, 5000));
+      // Instagram loads pending requests via GraphQL (/api/graphql).
+      // Set up listener BEFORE navigating so we capture all responses.
+      const inboxThreadIdSet = new Set(igInboxThreads.map((t) => t.thread_id));
+      const requestThreadIds: string[] = [];
 
-      // Strategy A: scrape thread IDs from any anchor with /direct/ in href
-      let requestThreadIds: string[] = await page.evaluate(() => {
-        const ids: string[] = [];
-        document.querySelectorAll("a").forEach((a: HTMLAnchorElement) => {
-          const m = (a.href || "").match(/\/direct\/(?:t\/)?(\d{10,})/);
-          if (m && !ids.includes(m[1])) ids.push(m[1]);
-        });
-        return ids;
-      });
-
-      // Debug: log what direct-links are present if nothing found
-      if (requestThreadIds.length === 0) {
-        const debugHrefs: string[] = await page.evaluate(() =>
-          Array.from(document.querySelectorAll("a"))
-            .map((a: any) => a.href as string)
-            .filter((h) => h.includes("/direct/"))
-            .slice(0, 10),
-        );
-        addCronLog(
-          `Debug – direct links on requests page: ${debugHrefs.join(" | ") || "none"}`,
-          "warning",
-        );
-
-        // Strategy B: click each visible thread row, grab thread ID from URL
-        const clickableCount: number = await page.evaluate(() => {
-          return document.querySelectorAll('[role="listitem"], [role="option"]')
-            .length;
-        });
-        addCronLog(`Strategy B: ${clickableCount} list item(s) found.`, "info");
-
-        if (clickableCount > 0) {
-          for (let i = 0; i < clickableCount; i++) {
-            try {
-              const items = await page.$$('[role="listitem"], [role="option"]');
-              if (!items[i]) break;
-              await items[i].click();
-              await new Promise((r) => setTimeout(r, 3000));
-              const currentUrl = page.url();
-              const m = currentUrl.match(/\/direct\/t\/(\d+)/);
-              if (m && !requestThreadIds.includes(m[1])) {
-                requestThreadIds.push(m[1]);
-                addCronLog(`Strategy B found thread: ${m[1]}`, "info");
-              }
-              // Go back to requests list
-              await navigateTo(page, "https://www.instagram.com/direct/requests/");
-              await new Promise((r) => setTimeout(r, 3000));
-            } catch (e: any) {
-              addCronLog(`Strategy B click error: ${e.message}`, "warning");
-            }
+      const graphqlRespListener = async (resp: any) => {
+        const url: string = resp.url();
+        if (!url.includes("/api/graphql") && !url.includes("/graphql"))
+          return;
+        try {
+          const text = await resp.text().catch(() => "");
+          if (!text.includes('"thread_id"')) return;
+          const matches = text.matchAll(/"thread_id":"(\d+)"/g);
+          for (const m of matches) {
+            const tid = m[1];
+            if (!inboxThreadIdSet.has(tid) && !requestThreadIds.includes(tid))
+              requestThreadIds.push(tid);
           }
-        }
-      }
+        } catch { /* ignore */ }
+      };
 
-      addCronLog(`${requestThreadIds.length} pending request thread(s) found.`, "info");
+      page.on("response", graphqlRespListener);
+      await navigateTo(page, "https://www.instagram.com/direct/requests/");
+      await new Promise((r) => setTimeout(r, 6000));
+      page.off("response", graphqlRespListener);
+
+      addCronLog(
+        `${requestThreadIds.length} pending request thread(s) found.`,
+        "info",
+      );
 
       for (const threadId of requestThreadIds) {
         if (!g.instar_inbox_cronRunning) break;
@@ -541,10 +515,14 @@ async function dmCronTick(
           isPending: true,
         };
         try {
-          await processThread(page, thread, openai, db, ds_user_id);
-          g.instar_inbox_processedThreadIds.add(cacheKey);
+          const ok = await processThread(page, thread, openai, db, ds_user_id);
+          // Only cache on success so failed attempts are retried next tick
+          if (ok) g.instar_inbox_processedThreadIds.add(cacheKey);
         } catch (err: any) {
-          addCronLog(`Error processing request thread ${threadId}: ${err.message}`, "error");
+          addCronLog(
+            `Error processing request thread ${threadId}: ${err.message}`,
+            "error",
+          );
         }
       }
     }
@@ -649,7 +627,7 @@ export async function POST(req: NextRequest) {
       dmCronTick(sessionid, ds_user_id, csrftoken, mid);
       g.instar_inbox_cronInterval = setInterval(
         () => dmCronTick(sessionid, ds_user_id, csrftoken, mid),
-        90_000,
+        60_000,
       );
 
       return NextResponse.json({ success: true, message: "DM cron started." });

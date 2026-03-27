@@ -72,7 +72,7 @@ async function getGrowBrowser(): Promise<Browser> {
   if (!g.instarGrowBrowser || !g.instarGrowBrowser.connected) {
     addGrowLog("Starting growth Puppeteer browser...", "info");
     g.instarGrowBrowser = await puppeteer.launch({
-      headless: false,
+      headless: true,
       userDataDir: "./ig_puppeteer_profile_grow",
       defaultViewport: { width: 1280, height: 900 },
       args: [
