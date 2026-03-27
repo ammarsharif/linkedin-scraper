@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   getDatabase,
-  InstarConversationLog,
   InstarChatMessage,
 } from "@/lib/mongodb";
-import puppeteer, { Browser } from "puppeteer";
+import puppeteer, { Browser, Page } from "puppeteer";
 import OpenAI from "openai";
 
 export const maxDuration = 60;
@@ -37,8 +36,6 @@ function addCronLog(
   console.log(`[instar-dm-cron][${type}] ${message}`);
 }
 
-// Persistent Puppeteer browser instance for Instagram
-
 async function getBrowser(): Promise<Browser> {
   if (!g.instarBrowser || !g.instarBrowser.connected) {
     addCronLog("Starting new Puppeteer browser for Instagram...", "info");
@@ -64,6 +61,326 @@ function getOpenAI(): OpenAI {
   return new OpenAI({ apiKey: key });
 }
 
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+interface ThreadInfo {
+  threadId: string;
+  senderName: string;
+  lastMessage: string;
+  isPending: boolean;
+}
+
+interface IGAPIThread {
+  thread_id: string;
+  thread_title: string;
+  unseen_count: number;
+  read_state: number;
+  pending: boolean;
+  items: Array<{
+    text?: string;
+    item_type: string;
+    user_id: number | string;
+  }>;
+  users: Array<{
+    pk: string;
+    username: string;
+    full_name: string;
+  }>;
+  viewer_id: string;
+}
+
+async function navigateTo(page: Page, url: string): Promise<void> {
+  try {
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+  } catch (e: any) {
+    if (!e.message?.includes("ERR_ABORTED")) throw e;
+  }
+  await new Promise((r) => setTimeout(r, 4000));
+}
+
+/**
+ * Fetch DM threads via Instagram's private API, executed inside the Puppeteer
+ * page context so session cookies are automatically included.
+ */
+async function fetchIGThreads(
+  page: Page,
+  isPending: boolean,
+): Promise<IGAPIThread[]> {
+  const endpoint = isPending
+    ? "https://www.instagram.com/api/v1/direct_v2/pending_inbox/?visual_message_return_type=unseen&direction=older&limit=20"
+    : "https://www.instagram.com/api/v1/direct_v2/inbox/?visual_message_return_type=unseen&direction=older&limit=20";
+
+  const result = await page.evaluate(async (url: string) => {
+    const csrf =
+      document.cookie
+        .split(";")
+        .find((c) => c.trim().startsWith("csrftoken="))
+        ?.split("=")[1] || "";
+    try {
+      const res = await fetch(url, {
+        headers: {
+          "X-CSRFToken": csrf,
+          "X-IG-App-ID": "936619743392459",
+          "X-Requested-With": "XMLHttpRequest",
+          Accept: "*/*",
+        },
+        credentials: "include",
+      });
+      const text = await res.text();
+      if (!res.ok) return { error: `HTTP ${res.status}: ${text.slice(0, 200)}`, threads: [] };
+      const data = JSON.parse(text);
+      const threads =
+        data.inbox?.threads ||
+        data.pending_inbox?.threads ||
+        [];
+      return { threads };
+    } catch (e: any) {
+      return { error: e.message, threads: [] };
+    }
+  }, endpoint);
+
+  if (result.error) {
+    addCronLog(`IG API error (${isPending ? "requests" : "inbox"}): ${result.error}`, "error");
+    return [];
+  }
+
+  addCronLog(
+    `IG API (${isPending ? "requests" : "inbox"}): ${result.threads.length} thread(s) returned.`,
+    "info",
+  );
+  return result.threads as IGAPIThread[];
+}
+
+/**
+ * Fetch full messages for a thread via Instagram's thread detail API.
+ * Much more reliable than DOM scraping.
+ */
+async function fetchThreadMessages(
+  page: Page,
+  threadId: string,
+  viewerId: string,
+): Promise<{ text: string; isMine: boolean }[]> {
+  const result = await page.evaluate(
+    async (tid: string, uid: string) => {
+      const csrf =
+        document.cookie
+          .split(";")
+          .find((c) => c.trim().startsWith("csrftoken="))
+          ?.split("=")[1] || "";
+      try {
+        const res = await fetch(
+          `https://www.instagram.com/api/v1/direct_v2/threads/${tid}/?visual_message_return_type=unseen&direction=older&limit=20`,
+          {
+            headers: {
+              "X-CSRFToken": csrf,
+              "X-IG-App-ID": "936619743392459",
+              "X-Requested-With": "XMLHttpRequest",
+              Accept: "*/*",
+            },
+            credentials: "include",
+          },
+        );
+        const data = await res.json();
+        const thread = data.thread;
+        if (!thread) return { msgs: [], error: "No thread in response" };
+        const viewerPk = uid || String(thread.viewer_id);
+        const msgs = (thread.items || [])
+          .filter((item: any) => item.item_type === "text" && item.text)
+          .map((item: any) => ({
+            text: item.text as string,
+            isMine: String(item.user_id) === viewerPk,
+          }))
+          .reverse(); // API returns newest-first; reverse so last = most recent
+        return { msgs, error: null };
+      } catch (e: any) {
+        return { msgs: [], error: e.message };
+      }
+    },
+    threadId,
+    viewerId,
+  );
+
+  if (result.error) {
+    addCronLog(`Thread detail API error: ${result.error}`, "warning");
+  }
+  return result.msgs;
+}
+
+/**
+ * Type and send a reply in the currently open thread.
+ * Returns true on success.
+ */
+async function sendReply(page: Page, reply: string): Promise<boolean> {
+  const textboxSelector = 'div[contenteditable="true"][role="textbox"]';
+
+  try {
+    await page.waitForSelector(textboxSelector, { timeout: 12000 });
+    await page.click(textboxSelector);
+    await new Promise((r) => setTimeout(r, 400));
+    await page.keyboard.type(reply, { delay: 30 });
+    await page.keyboard.press("Enter");
+    await new Promise((r) => setTimeout(r, 2000));
+    return true;
+  } catch {
+    // Try clicking the placeholder area and retrying
+    try {
+      await page.evaluate(() => {
+        const placeholder = document.querySelector(
+          '[placeholder*="essage"], [aria-label*="essage"]',
+        ) as HTMLElement;
+        if (placeholder) placeholder.click();
+      });
+      await new Promise((r) => setTimeout(r, 1500));
+      await page.waitForSelector(textboxSelector, { timeout: 8000 });
+      await page.click(textboxSelector);
+      await new Promise((r) => setTimeout(r, 400));
+      await page.keyboard.type(reply, { delay: 30 });
+      await page.keyboard.press("Enter");
+      await new Promise((r) => setTimeout(r, 2000));
+      return true;
+    } catch (e: any) {
+      addCronLog(`Compose box not found: ${e.message}`, "error");
+      return false;
+    }
+  }
+}
+
+/**
+ * Process a single thread: navigate → (accept if request) → read → reply → save.
+ */
+async function processThread(
+  page: Page,
+  thread: ThreadInfo,
+  openai: OpenAI,
+  db: any,
+  viewerId: string,
+): Promise<void> {
+  const cacheKey = thread.threadId + "_" + thread.lastMessage.slice(0, 40);
+  if (g.instar_inbox_processedThreadIds.has(cacheKey)) {
+    addCronLog(`Already processed: ${thread.senderName}`, "info");
+    return;
+  }
+
+  addCronLog(`Opening thread: ${thread.senderName}`, "info");
+  await navigateTo(page, `https://www.instagram.com/direct/t/${thread.threadId}/`);
+
+  // Resolve real sender name from page title if we only have a placeholder
+  if (thread.senderName === "Request") {
+    const pageName = await page.evaluate(() => {
+      const h = document.querySelector('h2, [role="heading"]') as HTMLElement | null;
+      return h?.innerText?.trim() || document.title.replace("• Instagram", "").trim() || "Unknown";
+    });
+    thread.senderName = pageName || "Unknown";
+  }
+
+  // Accept request if needed
+  if (thread.isPending && g.instar_inbox_autoAcceptRequests) {
+    const accepted = await page.evaluate(() => {
+      const btns = Array.from(
+        document.querySelectorAll('button, [role="button"]'),
+      ) as HTMLElement[];
+      const acceptBtn = btns.find((b) => {
+        const t = (b.innerText || b.getAttribute("aria-label") || "")
+          .trim()
+          .toLowerCase();
+        return t === "accept" || t === "allow";
+      });
+      if (acceptBtn) {
+        acceptBtn.click();
+        return true;
+      }
+      return false;
+    });
+    if (accepted) {
+      addCronLog(`Accepted request from ${thread.senderName}.`, "success");
+      await new Promise((r) => setTimeout(r, 4000));
+    } else {
+      addCronLog(
+        `No Accept button found for ${thread.senderName} – may already be accepted.`,
+        "warning",
+      );
+    }
+  }
+
+  const threadId = thread.threadId;
+
+  // Fetch full messages via API
+  const messages = await fetchThreadMessages(page, threadId, viewerId);
+  const lastUserMsg = messages.filter((m: { text: string; isMine: boolean }) => !m.isMine).pop();
+  const incomingText = lastUserMsg?.text || thread.lastMessage;
+
+  if (!incomingText || incomingText.trim().length < 2) {
+    addCronLog(`No readable message from ${thread.senderName}.`, "warning");
+    return;
+  }
+
+  addCronLog(`Generating reply to: "${incomingText.slice(0, 50)}..."`, "info");
+
+  const completion = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [
+      { role: "system", content: g.instar_inbox_systemPrompt },
+      {
+        role: "user",
+        content: `Message from ${thread.senderName}: ${incomingText}`,
+      },
+    ],
+    temperature: 0.7,
+    max_tokens: 150,
+  });
+
+  const reply = completion.choices[0]?.message?.content?.trim() || "";
+  if (!reply) {
+    addCronLog("Empty AI reply.", "warning");
+    return;
+  }
+
+  addCronLog(`Sending reply: "${reply.slice(0, 50)}..."`, "info");
+  const sent = await sendReply(page, reply);
+
+  if (!sent) {
+    addCronLog(`Failed to send reply to ${thread.senderName}.`, "error");
+    return;
+  }
+
+  // Save to DB
+  const logsCollection = db.collection("instar_conversation_logs");
+  const prospectMsg: InstarChatMessage = {
+    role: "prospect",
+    text: incomingText,
+    timestamp: new Date().toISOString(),
+    source: "ig_inbox",
+  };
+  const botMsg: InstarChatMessage = {
+    role: "instar",
+    text: reply,
+    timestamp: new Date().toISOString(),
+    source: "instar_cron",
+  };
+
+  const existingLog = await logsCollection.findOne({ threadId });
+  if (existingLog) {
+    await logsCollection.updateOne(
+      { threadId },
+      {
+        $push: { messages: { $each: [prospectMsg, botMsg] } } as any,
+        $set: { lastActivity: new Date().toISOString() },
+      },
+    );
+  } else {
+    await logsCollection.insertOne({
+      threadId,
+      senderUsername: thread.senderName,
+      lastActivity: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      messages: [prospectMsg, botMsg],
+    } as any);
+  }
+
+  g.instar_inbox_processedThreadIds.add(cacheKey);
+  addCronLog(`✓ Replied to ${thread.senderName}.`, "success");
+}
+
 // ── Main DM cron tick ──────────────────────────────────────────────────────
 async function dmCronTick(
   sessionid: string,
@@ -78,629 +395,170 @@ async function dmCronTick(
   try {
     const browser = await getBrowser();
     const pages = await browser.pages();
-    let page = pages.find((p) => p.url().includes("instagram.com"));
+    let page = pages.find((p) => p.url().includes("instagram.com")) as
+      | Page
+      | undefined;
+
     if (!page) {
       page = await browser.newPage();
+      page.on("console", (msg) => console.log("[page-console]", msg.text()));
 
-      // Stealth: override automation flags
+      // Stealth
       await page.evaluateOnNewDocument(() => {
-        Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+        Object.defineProperty(navigator, "webdriver", {
+          get: () => undefined,
+        });
       });
 
       await page.setCookie(
         { name: "sessionid", value: sessionid, domain: ".instagram.com" },
         { name: "ds_user_id", value: ds_user_id, domain: ".instagram.com" },
         { name: "csrftoken", value: csrftoken, domain: ".instagram.com" },
-        ...(mid ? [{ name: "mid", value: mid, domain: ".instagram.com" }] : []),
+        ...(mid
+          ? [{ name: "mid", value: mid, domain: ".instagram.com" }]
+          : []),
       );
-    }
-
-    addCronLog("Navigating to Instagram DMs...", "info");
-    try {
-      await page.goto("https://www.instagram.com/direct/inbox/", {
-        waitUntil: "domcontentloaded",
-        timeout: 45000,
-      });
-    } catch (e: any) {
-      if (!e.message?.includes("ERR_ABORTED")) throw e;
-    }
-
-    await new Promise((r) => setTimeout(r, 5000));
-    addCronLog(`Current URL: ${page.url()}`, "info");
-
-    // Check if redirected to login
-    if (page.url().includes("/accounts/login")) {
-      addCronLog("Session expired – redirected to login page.", "error");
-      g.instar_inbox_consecutiveErrors++;
-      return;
-    }
-
-    // ── Strategy: collect ALL thread links, then determine which are unread ──
-    const threads = await page.evaluate(() => {
-      const results: {
-        threadId: string;
-        senderName: string;
-        lastMessage: string;
-        isPending: boolean;
-      }[] = [];
-      const seen = new Set<string>();
-
-      // Helper: does this element have any unread signal?
-      function isUnread(el: Element): boolean {
-        // 1. Text content explicit matches
-        const textContext = el.textContent?.toLowerCase() || "";
-        if (
-          textContext.includes("new message") ||
-          textContext.includes("new request")
-        )
-          return true;
-
-        // 2. Check all descendant spans/divs/p for styling
-        const textNodes = el.querySelectorAll("span, div, p");
-        for (const node of textNodes) {
-          const style = window.getComputedStyle(node);
-          const fw = style.fontWeight;
-          // Instagram sometimes uses fw 600 or 700 for unread text.
-          if (fw === "800" || fw === "900" || fw === "bold") {
-            return true;
-          }
-          if (fw === "700") {
-            // Often unread texts are 700
-            // But let's check if the element has any sibling or not to avoid matching standard names..
-            // For safety against regression, let's just return true as it was before.
-            return true;
-          }
-
-          // Blue unread dots / text
-          const bg = style.backgroundColor;
-          if (
-            bg === "rgb(0, 149, 246)" ||
-            bg === "rgb(24, 119, 242)" ||
-            bg.includes("var(--ig-primary-button)") ||
-            bg.includes("var(--ig-primary-text)")
-          )
-            return true;
-
-          const color = style.color;
-          if (
-            color === "rgb(0, 149, 246)" ||
-            color === "rgb(24, 119, 242)" ||
-            color.includes("var(--ig-primary-button)")
-          )
-            return true;
-        }
-
-        // 3. SVG dot – Instagram uses a small filled circle as an unread badge
-        const svgs = el.querySelectorAll("svg circle, svg path");
-        for (const s of svgs) {
-          const fill = s.getAttribute("fill") || "";
-          if (
-            fill.toLowerCase().includes("#0095f6") ||
-            fill.toLowerCase().includes("#1877f2")
-          )
-            return true;
-          const colorAttr = s.getAttribute("color") || "";
-          if (
-            colorAttr.toLowerCase().includes("#0095f6") ||
-            colorAttr.toLowerCase().includes("#1877f2")
-          )
-            return true;
-        }
-
-        // 4. Aria-label unread signals
-        if (el.querySelector('[aria-label*="nread"]')) return true;
-        if (el.querySelector('[aria-label*="ew message"]')) return true;
-
-        // 5. Class name / innerHTML heuristics
-        const htmlStr = el.innerHTML.toLowerCase();
-        if (htmlStr.includes('"unread"') || htmlStr.includes("unread:true"))
-          return true;
-
-        // 6. Data attributes
-        if (el.querySelector('[data-testid*="unread"]')) return true;
-
-        // 7. Check for a notification badge (small number bubble)
-        const badge = el.querySelector(
-          '[aria-label*="message"], [aria-label*="Message"], [aria-label*="unread"], [aria-label*="Unread"]',
-        );
-        if (badge) return true;
-
-        // 8. Unread dot character
-        const textContent = el.textContent || "";
-        if (textContent.includes("•")) {
-          // Instagram often uses an unescaped dot character for unread messages
-          return true;
-        }
-
-        return false;
-      }
-
-      function extractThread(link: HTMLAnchorElement, isPending: boolean) {
-        const href = link.getAttribute("href") || "";
-        if (!href.includes("/direct/t/")) return;
-        const threadId = href.split("/direct/t/")[1]?.replace(/\//g, "") || "";
-        if (!threadId || seen.has(threadId)) return;
-
-        // Walk up to find the containing list item / row
-        let container: Element = link;
-        for (let i = 0; i < 6; i++) {
-          if (container.parentElement) container = container.parentElement;
-          else break;
-        }
-
-        const senderName =
-          container.querySelector("img[alt]")?.getAttribute("alt") ||
-          link.getAttribute("aria-label") ||
-          container.querySelector("[aria-label]")?.getAttribute("aria-label") ||
-          "Unknown";
-
-        const spans = container.querySelectorAll("span, div");
-        let lastMessage = "";
-        for (const span of spans) {
-          const t = (span as HTMLElement).innerText?.trim();
-          if (
-            t &&
-            t.length > 3 &&
-            t.length < 300 &&
-            !t.includes("Active") &&
-            !t.includes("active") &&
-            !t.match(/^\d+[smhd]$/)
-          ) {
-            lastMessage = t;
-          }
-        }
-
-        const unread = isPending || isUnread(container);
-        if (!unread) return;
-
-        seen.add(threadId);
-        results.push({
-          threadId,
-          senderName:
-            String(senderName).replace(/\n.*/s, "").trim() || "Unknown",
-          lastMessage,
-          isPending,
-        });
-      }
-
-      // Scan ALL anchor tags pointing to /direct/t/ (accepted threads)
-      document
-        .querySelectorAll<HTMLAnchorElement>('a[href*="/direct/t/"]')
-        .forEach((a) => {
-          extractThread(a, false);
-        });
-
-      // Also scan message requests section — links under /direct/pending/ or /direct/requests/
-      document
-        .querySelectorAll<HTMLAnchorElement>(
-          'a[href*="/direct/pending/"], a[href*="/direct/requests/"]',
-        )
-        .forEach((a) => {
-          // These are requests — treat them as pending threads
-          const href = a.getAttribute("href") || "";
-          // Normalise: extract thread id if any
-          const match = href.match(/\/direct\/(pending|requests|t)\/(\d+)/);
-          if (match) {
-            // Re-use extractThread but mark pending=true
-            extractThread(a, true);
-          }
-        });
-
-      return results;
-    });
-
-    addCronLog(`Found ${threads.length} potentially unread thread(s).`, "info");
-
-    // ── Also check if there are pending message requests visible ──
-    try {
-      const requestsLink = await page.$(
-        'a[href*="/direct/requests"], a[href*="message-requests"]',
-      );
-      if (requestsLink) {
-        addCronLog(
-          "Message Requests link found – navigating to check pending requests...",
-          "info",
-        );
-        await requestsLink.click();
-        await new Promise((r) => setTimeout(r, 3000));
-
-        const pendingThreads = await page.evaluate(() => {
-          const results: {
-            threadId: string;
-            senderName: string;
-            lastMessage: string;
-            isPending: boolean;
-          }[] = [];
-          const seen = new Set<string>();
-          document
-            .querySelectorAll<HTMLAnchorElement>('a[href*="/direct/t/"]')
-            .forEach((a) => {
-              const href = a.getAttribute("href") || "";
-              const threadId =
-                href.split("/direct/t/")[1]?.replace(/\//g, "") || "";
-              if (!threadId || seen.has(threadId)) return;
-              seen.add(threadId);
-              let container: Element = a;
-              for (let i = 0; i < 6; i++) {
-                if (container.parentElement)
-                  container = container.parentElement;
-                else break;
-              }
-              const senderName =
-                container.querySelector("img[alt]")?.getAttribute("alt") ||
-                a.getAttribute("aria-label") ||
-                "Unknown";
-              const spans = container.querySelectorAll("span, div");
-              let lastMessage = "";
-              for (const span of spans) {
-                const t = (span as HTMLElement).innerText?.trim();
-                if (
-                  t &&
-                  t.length > 3 &&
-                  t.length < 300 &&
-                  !t.includes("Active")
-                ) {
-                  lastMessage = t;
-                }
-              }
-              results.push({
-                threadId,
-                senderName:
-                  String(senderName).replace(/\n.*/s, "").trim() || "Unknown",
-                lastMessage,
-                isPending: true,
-              });
-            });
-          return results;
-        });
-
-        if (pendingThreads.length > 0) {
-          addCronLog(
-            `Found ${pendingThreads.length} pending message request(s).`,
-            "info",
-          );
-          // Merge, dedup by threadId
-          const existingIds = new Set(threads.map((t) => t.threadId));
-          for (const pt of pendingThreads) {
-            if (!existingIds.has(pt.threadId)) threads.push(pt);
-          }
-        }
-
-        // Navigate back to inbox
-        await page.goto("https://www.instagram.com/direct/inbox/", {
-          waitUntil: "domcontentloaded",
-          timeout: 30000,
-        });
-        await new Promise((r) => setTimeout(r, 2000));
-      }
-    } catch (reqErr: any) {
-      addCronLog(
-        `Could not check message requests: ${reqErr.message}`,
-        "warning",
-      );
-    }
-
-    if (threads.length === 0) {
-      addCronLog("No unread DMs found.", "info");
-      g.instar_inbox_consecutiveErrors = 0;
-      return;
     }
 
     const db = await getDatabase();
     const openai = getOpenAI();
 
-    for (const thread of threads) {
-      if (!g.instar_inbox_cronRunning) {
-        addCronLog("Cron stopped mid-execution. Aborting early.", "warning");
-        return;
-      }
+    // Navigate to inbox once to activate the session in the browser context
+    addCronLog("Navigating to Instagram inbox...", "info");
+    await navigateTo(page, "https://www.instagram.com/direct/inbox/");
 
-      if (
-        g.instar_inbox_processedThreadIds.has(
-          thread.threadId + "_" + thread.lastMessage,
-        )
-      ) {
-        addCronLog(
-          `Skipping already-processed thread: ${thread.senderName}`,
-          "info",
-        );
-        continue;
-      }
-      if (thread.isPending) {
-        if (!g.instar_inbox_autoAcceptRequests) {
-          addCronLog(
-            `Thread from ${thread.senderName} is a pending request. Auto-accept is OFF – skipping.`,
-            "warning",
-          );
-          g.instar_inbox_processedThreadIds.add(
-            thread.threadId + "_" + thread.lastMessage,
-          );
-          continue;
-        }
+    if (page.url().includes("/accounts/login")) {
+      addCronLog("Session expired – redirected to login.", "error");
+      g.instar_inbox_consecutiveErrors++;
+      return;
+    }
 
-        addCronLog(
-          `Pending request from ${thread.senderName} – attempting to auto-accept...`,
-          "info",
-        );
-        try {
-          // Navigate directly to the thread URL
-          await page.goto(
-            `https://www.instagram.com/direct/t/${thread.threadId}/`,
-            {
-              waitUntil: "domcontentloaded",
-              timeout: 30000,
-            },
-          );
-          await new Promise((r) => setTimeout(r, 3000));
+    // ── Phase 1: Regular inbox – fetch via API ─────────────────────────────
+    const igInboxThreads = await fetchIGThreads(page, false);
+    // Only process threads with unseen messages
+    const unreadInbox = igInboxThreads.filter(
+      (t) => t.unseen_count > 0 || t.read_state !== 0,
+    );
+    addCronLog(`${unreadInbox.length} unread thread(s) in inbox.`, "info");
 
-          // Try to find and click the Accept / Allow button
-          const acceptSelectors = [
-            'button[type="submit"]',
-            'button:has-text("Accept")',
-            'button:has-text("Allow")',
-            '[aria-label="Accept"]',
-            '[aria-label="Allow"]',
-          ];
-
-          let accepted = false;
-          for (const sel of acceptSelectors) {
-            try {
-              const btn = await page.$(sel);
-              if (btn) {
-                const btnText = await page.evaluate(
-                  (b) => (b as HTMLElement).innerText?.toLowerCase() || "",
-                  btn,
-                );
-                if (
-                  btnText.includes("accept") ||
-                  btnText.includes("allow") ||
-                  sel.includes("Accept") ||
-                  sel.includes("Allow")
-                ) {
-                  await btn.click();
-                  addCronLog(
-                    `Clicked accept button ("${btnText || sel}") for ${thread.senderName}.`,
-                    "info",
-                  );
-                  accepted = true;
-                  await new Promise((r) => setTimeout(r, 2500));
-                  break;
-                }
-              }
-            } catch {}
-          }
-
-          // Fallback: scan all visible buttons for accept/allow text
-          if (!accepted) {
-            accepted = await page.evaluate(() => {
-              const buttons = Array.from(document.querySelectorAll("button"));
-              for (const btn of buttons) {
-                const t = btn.innerText?.toLowerCase() || "";
-                if (t.includes("accept") || t.includes("allow")) {
-                  btn.click();
-                  return true;
-                }
-              }
-              return false;
-            });
-            if (accepted) {
-              addCronLog(
-                `Accepted request from ${thread.senderName} via text scan.`,
-                "info",
-              );
-              await new Promise((r) => setTimeout(r, 2500));
-            }
-          }
-
-          if (!accepted) {
-            addCronLog(
-              `Could not find Accept button for ${thread.senderName} – skipping.`,
-              "warning",
-            );
-            g.instar_inbox_processedThreadIds.add(
-              thread.threadId + "_" + thread.lastMessage,
-            );
-            // Go back to inbox before next thread
-            await page.goto("https://www.instagram.com/direct/inbox/", {
-              waitUntil: "domcontentloaded",
-              timeout: 30000,
-            });
-            await new Promise((r) => setTimeout(r, 2000));
-            continue;
-          }
-
-          addCronLog(
-            `✓ Accepted request from ${thread.senderName}. Now reading message...`,
-            "success",
-          );
-          // thread.isPending = false — fall through to normal reply flow below
-        } catch (acceptErr: any) {
-          addCronLog(
-            `Error auto-accepting thread from ${thread.senderName}: ${acceptErr.message}`,
-            "error",
-          );
-          g.instar_inbox_processedThreadIds.add(
-            thread.threadId + "_" + thread.lastMessage,
-          );
-          continue;
-        }
-      }
-
-      addCronLog(`Opening DM thread from: ${thread.senderName}`, "info");
-
+    for (const igThread of unreadInbox) {
+      if (!g.instar_inbox_cronRunning) break;
+      const senderName =
+        igThread.users.find((u) => u.pk !== igThread.viewer_id)?.full_name ||
+        igThread.thread_title ||
+        "Unknown";
+      const lastMsg = igThread.items.find(
+        (i) =>
+          i.item_type === "text" &&
+          String(i.user_id) !== String(igThread.viewer_id),
+      );
+      const thread: ThreadInfo = {
+        threadId: igThread.thread_id,
+        senderName,
+        lastMessage: lastMsg?.text || "",
+        isPending: false,
+      };
       try {
-        // For pending threads we already navigated to the thread; for normal ones, click the link
-        if (!thread.isPending || !page.url().includes(thread.threadId)) {
-          await page.evaluate((tid) => {
-            const links = document.querySelectorAll("a");
-            for (const link of links) {
-              if (link.href.includes(`/direct/t/${tid}`)) {
-                (link as HTMLElement).click();
-                break;
-              }
-            }
-          }, thread.threadId);
-          await new Promise((r) => setTimeout(r, 3000));
-        }
-
-        if (!g.instar_inbox_cronRunning) return; // double check after waits
-        await new Promise((r) => setTimeout(r, 1500));
-
-        // Read message content from the thread — multi-strategy
-        const messages = await page.evaluate(() => {
-          const msgs: { text: string; isMine: boolean }[] = [];
-
-          // Strategy 1: role="row" containers (classic)
-          document
-            .querySelectorAll('[role="row"], [role="listitem"]')
-            .forEach((el) => {
-              const text = (el as HTMLElement).innerText?.trim();
-              if (!text || text.length < 2 || text.length > 500) return;
-              const style = window.getComputedStyle(el as HTMLElement);
-              const isMine =
-                style.justifyContent === "flex-end" ||
-                (el as HTMLElement).style.alignSelf === "flex-end" ||
-                style.alignItems === "flex-end";
-              msgs.push({ text, isMine });
-            });
-
-          // Strategy 2: look for message bubbles via data-testid
-          if (msgs.length === 0) {
-            document
-              .querySelectorAll('[data-testid*="message"], [class*="message"]')
-              .forEach((el) => {
-                const text = (el as HTMLElement).innerText?.trim();
-                if (!text || text.length < 2 || text.length > 500) return;
-                const rect = el.getBoundingClientRect();
-                const containerRect = el
-                  .closest('[role="main"]')
-                  ?.getBoundingClientRect();
-                const isMine = containerRect
-                  ? rect.left > containerRect.left + containerRect.width / 2
-                  : false;
-                msgs.push({ text, isMine });
-              });
-          }
-
-          return msgs;
-        });
-
-        const lastUserMsg = messages.filter((m) => !m.isMine).pop();
-        const incomingText = lastUserMsg?.text || thread.lastMessage;
-
-        if (!incomingText || incomingText.length < 2) {
-          addCronLog(
-            `No readable message in thread from ${thread.senderName}`,
-            "warning",
-          );
-          continue;
-        }
-
-        addCronLog(
-          `Generating reply to: "${incomingText.slice(0, 60)}..."`,
-          "info",
-        );
-
-        const completion = await openai.chat.completions.create({
-          model: "gpt-4o-mini",
-          messages: [
-            { role: "system", content: g.instar_inbox_systemPrompt },
-            {
-              role: "user",
-              content: `Message from ${thread.senderName}: ${incomingText}`,
-            },
-          ],
-          temperature: 0.7,
-          max_tokens: 150,
-        });
-
-        const reply = completion.choices[0]?.message?.content?.trim() || "";
-        if (!reply) {
-          addCronLog("AI returned empty reply.", "warning");
-          continue;
-        }
-
-        addCronLog(`Sending reply: "${reply.slice(0, 60)}..."`, "info");
-
-        // Find the message input box and type reply
-        const inputSelector =
-          'div[contenteditable="true"][role="textbox"], textarea[placeholder*="essage"], div[aria-label*="essage"]';
-        await page.waitForSelector(inputSelector, { timeout: 8000 });
-        await page.focus(inputSelector);
-
-        // Type character by character with small delays
-        for (const char of reply) {
-          await page.type(inputSelector, char, { delay: 30 });
-        }
-
-        await new Promise((r) => setTimeout(r, 500));
-        await page.keyboard.press("Enter");
-        await new Promise((r) => setTimeout(r, 2000));
-
-        // Log to MongoDB
-        const logsCollection = db.collection<InstarConversationLog>(
-          "instar_conversation_logs",
-        );
-        const existingLog = await logsCollection.findOne({
-          threadId: thread.threadId,
-        });
-
-        const prospectMsg: InstarChatMessage = {
-          role: "prospect",
-          text: incomingText,
-          timestamp: new Date().toISOString(),
-          source: "ig_inbox",
-        };
-        const botMsg: InstarChatMessage = {
-          role: "instar",
-          text: reply,
-          timestamp: new Date().toISOString(),
-          source: "instar_cron",
-        };
-
-        if (existingLog) {
-          await logsCollection.updateOne(
-            { threadId: thread.threadId },
-            {
-              $push: { messages: { $each: [prospectMsg, botMsg] } },
-              $set: { lastActivity: new Date().toISOString() },
-            },
-          );
-        } else {
-          await logsCollection.insertOne({
-            threadId: thread.threadId,
-            senderUsername: thread.senderName,
-            lastActivity: new Date().toISOString(),
-            createdAt: new Date().toISOString(),
-            messages: [prospectMsg, botMsg],
-          });
-        }
-
-        g.instar_inbox_processedThreadIds.add(
-          thread.threadId + "_" + thread.lastMessage,
-        );
-        addCronLog(`✓ Replied to ${thread.senderName}.`, "success");
-
-        // Small delay between threads
-        await new Promise((r) => setTimeout(r, 2000));
-      } catch (threadErr: any) {
-        addCronLog(
-          `Error processing thread ${thread.senderName}: ${threadErr.message}`,
-          "error",
-        );
+        await processThread(page, thread, openai, db, ds_user_id);
+      } catch (err: any) {
+        addCronLog(`Error processing ${senderName}: ${err.message}`, "error");
       }
+    }
+
+    // ── Phase 2: Message requests – click each item and process ───────────
+    if (g.instar_inbox_autoAcceptRequests) {
+      addCronLog("Checking message requests...", "info");
+
+      await navigateTo(page, "https://www.instagram.com/direct/requests/");
+      await new Promise((r) => setTimeout(r, 5000));
+
+      // Strategy A: scrape thread IDs from any anchor with /direct/ in href
+      let requestThreadIds: string[] = await page.evaluate(() => {
+        const ids: string[] = [];
+        document.querySelectorAll("a").forEach((a: HTMLAnchorElement) => {
+          const m = (a.href || "").match(/\/direct\/(?:t\/)?(\d{10,})/);
+          if (m && !ids.includes(m[1])) ids.push(m[1]);
+        });
+        return ids;
+      });
+
+      // Debug: log what direct-links are present if nothing found
+      if (requestThreadIds.length === 0) {
+        const debugHrefs: string[] = await page.evaluate(() =>
+          Array.from(document.querySelectorAll("a"))
+            .map((a: any) => a.href as string)
+            .filter((h) => h.includes("/direct/"))
+            .slice(0, 10),
+        );
+        addCronLog(
+          `Debug – direct links on requests page: ${debugHrefs.join(" | ") || "none"}`,
+          "warning",
+        );
+
+        // Strategy B: click each visible thread row, grab thread ID from URL
+        const clickableCount: number = await page.evaluate(() => {
+          return document.querySelectorAll('[role="listitem"], [role="option"]')
+            .length;
+        });
+        addCronLog(`Strategy B: ${clickableCount} list item(s) found.`, "info");
+
+        if (clickableCount > 0) {
+          for (let i = 0; i < clickableCount; i++) {
+            try {
+              const items = await page.$$('[role="listitem"], [role="option"]');
+              if (!items[i]) break;
+              await items[i].click();
+              await new Promise((r) => setTimeout(r, 3000));
+              const currentUrl = page.url();
+              const m = currentUrl.match(/\/direct\/t\/(\d+)/);
+              if (m && !requestThreadIds.includes(m[1])) {
+                requestThreadIds.push(m[1]);
+                addCronLog(`Strategy B found thread: ${m[1]}`, "info");
+              }
+              // Go back to requests list
+              await navigateTo(page, "https://www.instagram.com/direct/requests/");
+              await new Promise((r) => setTimeout(r, 3000));
+            } catch (e: any) {
+              addCronLog(`Strategy B click error: ${e.message}`, "warning");
+            }
+          }
+        }
+      }
+
+      addCronLog(`${requestThreadIds.length} pending request thread(s) found.`, "info");
+
+      for (const threadId of requestThreadIds) {
+        if (!g.instar_inbox_cronRunning) break;
+        const cacheKey = threadId + "_pending";
+        if (g.instar_inbox_processedThreadIds.has(cacheKey)) {
+          addCronLog(`Already processed request ${threadId}`, "info");
+          continue;
+        }
+        const thread: ThreadInfo = {
+          threadId,
+          senderName: "Request",
+          lastMessage: "",
+          isPending: true,
+        };
+        try {
+          await processThread(page, thread, openai, db, ds_user_id);
+          g.instar_inbox_processedThreadIds.add(cacheKey);
+        } catch (err: any) {
+          addCronLog(`Error processing request thread ${threadId}: ${err.message}`, "error");
+        }
+      }
+    }
+
+    if (unreadInbox.length === 0) {
+      addCronLog("No unread DMs found.", "info");
     }
 
     g.instar_inbox_consecutiveErrors = 0;
   } catch (err: any) {
     g.instar_inbox_consecutiveErrors++;
     addCronLog(`Cron tick error: ${err.message}`, "error");
-
     if (g.instar_inbox_consecutiveErrors >= 5) {
-      addCronLog("5 consecutive errors – killing browser instance.", "error");
-      try {
-        await g.instarBrowser?.close();
-      } catch {}
+      await g.instarBrowser?.close();
       g.instarBrowser = undefined;
       g.instar_inbox_consecutiveErrors = 0;
     }
@@ -803,9 +661,8 @@ export async function POST(req: NextRequest) {
       g.instar_inbox_cronInterval = null;
       g.instar_inbox_cronRunning = false;
 
-      // Force kill the browser to ensure no ghost tasks keep running
       if (g.instarBrowser) {
-        addCronLog("Closing browser to forcefully stop DM task...", "warning");
+        addCronLog("Closing browser...", "warning");
         try {
           await g.instarBrowser.close();
         } catch {}
