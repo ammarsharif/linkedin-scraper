@@ -76,6 +76,9 @@ interface GrowthSettings {
   dailyCommentLimit: number;
   commentPrompt: string;
   autoReplyEnabled: boolean;
+  enableLike: boolean;
+  enableFollow: boolean;
+  enableComment: boolean;
 }
 
 interface MetricsData {
@@ -122,6 +125,9 @@ export default function InstarPage() {
     commentPrompt:
       "Write a short, genuine, relevant 1-sentence comment (no emojis, no hashtags) for an Instagram post about the topic provided. Be specific and insightful.",
     autoReplyEnabled: true,
+    enableLike: true,
+    enableFollow: true,
+    enableComment: true,
   });
   const [hashtagInput, setHashtagInput] = useState("");
   const [dailyCounts, setDailyCounts] = useState<Record<string, number>>({});
@@ -1048,6 +1054,37 @@ export default function InstarPage() {
                   >
                     Add
                   </button>
+                </div>
+              </div>
+
+              {/* Action toggles */}
+              <div>
+                <label className="block text-xs font-semibold mb-3" style={{ color: "#94a3b8" }}>
+                  Actions
+                </label>
+                <div className="flex gap-3">
+                  {[
+                    { key: "enableLike" as const, label: "Likes", color: "#ef4444" },
+                    { key: "enableFollow" as const, label: "Follows", color: "#3b82f6" },
+                    { key: "enableComment" as const, label: "Comments", color: "#10b981" },
+                  ].map(({ key, label, color }) => (
+                    <button
+                      key={key}
+                      onClick={() => setGrowSettings((s) => ({ ...s, [key]: !s[key] }))}
+                      className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold border transition-all cursor-pointer"
+                      style={{
+                        background: growSettings[key] ? `${color}22` : "rgba(255,255,255,0.03)",
+                        borderColor: growSettings[key] ? color : "rgba(255,255,255,0.1)",
+                        color: growSettings[key] ? color : "#64748b",
+                      }}
+                    >
+                      <span
+                        className="w-2 h-2 rounded-full"
+                        style={{ background: growSettings[key] ? color : "#334155" }}
+                      />
+                      {label}
+                    </button>
+                  ))}
                 </div>
               </div>
 
