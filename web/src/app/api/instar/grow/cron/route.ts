@@ -569,19 +569,9 @@ async function growCronTick(
       return;
     }
 
-    let currentIndex = parseInt(g.instar_grow_targetIndex, 10);
-    if (isNaN(currentIndex) || currentIndex < 0) currentIndex = 0;
-    currentIndex = currentIndex % allTargets.length;
-    const target = allTargets[currentIndex];
-    if (!target) {
-      addGrowLog("Failed to select a target from the list.", "error");
-      return;
-    }
-    g.instar_grow_targetIndex = currentIndex + 1;
-
-    const searchLabel =
-      target.type === "hashtag" ? `#${target.value}` : `@${target.value}`;
-    addGrowLog(`🎯 Targeting ${searchLabel} for ${actionName}s`, "info");
+    let postLinks: string[] = [];
+    let target: any = null;
+    let searchLabel = "";
 
     const browser = await getGrowBrowser();
     const openai = settings.enableComment ? getOpenAI() : (null as any);
@@ -604,52 +594,67 @@ async function growCronTick(
         await page.setCookie(cookie);
       }
 
-      const targetUrl =
-        target.type === "hashtag"
-          ? `https://www.instagram.com/explore/tags/${encodeURIComponent(target.value)}/`
-          : `https://www.instagram.com/${encodeURIComponent(target.value)}/`;
+      // ── Find a target with posts (up to 3 retries) ────────────────────────
+      const maxTargetRetries = Math.min(3, allTargets.length);
+      for (let attempt = 0; attempt < maxTargetRetries; attempt++) {
+        let currentIndex = parseInt(g.instar_grow_targetIndex, 10);
+        if (isNaN(currentIndex) || currentIndex < 0) currentIndex = 0;
+        currentIndex = currentIndex % allTargets.length;
+        target = allTargets[currentIndex];
+        if (!target) continue;
+        g.instar_grow_targetIndex = currentIndex + 1;
 
-      await page.goto(targetUrl, { waitUntil: "networkidle2", timeout: 45000 });
+        searchLabel = target.type === "hashtag" ? `#${target.value}` : `@${target.value}`;
+        addGrowLog(`🎯 Targeting ${searchLabel} for ${actionName}s`, "info");
 
-      if (page.url().includes("/accounts/login")) {
-        addGrowLog("❌ Session expired on growth browser. Please refresh your session.", "error");
-        await page.close();
-        g.instar_grow_consecutiveErrors++;
-        return;
-      }
+        const targetUrl =
+          target.type === "hashtag"
+            ? `https://www.instagram.com/explore/tags/${encodeURIComponent(target.value)}/`
+            : `https://www.instagram.com/${encodeURIComponent(target.value)}/`;
 
-      await new Promise((r) => setTimeout(r, 4000));
-      await page.evaluate(() => window.scrollBy(0, 600));
-      await new Promise((r) => setTimeout(r, 2000));
+        await page.goto(targetUrl, { waitUntil: "networkidle2", timeout: 45000 });
 
-      // Collect post links
-      const postLinks = await page.evaluate(() => {
-        const links = Array.from(
-          document.querySelectorAll("a[href]")
-        ) as HTMLAnchorElement[];
-        const seen = new Set<string>();
-        const result: string[] = [];
-        for (const l of links) {
-          const href = l.href;
-          if (
-            (href.includes("/p/") || href.includes("/reel/")) &&
-            !seen.has(href)
-          ) {
-            seen.add(href);
-            result.push(href);
-            if (result.length >= 20) break;
-          }
+        if (page.url().includes("/accounts/login")) {
+          addGrowLog("❌ Session expired on growth browser. Please refresh your session.", "error");
+          await page.close();
+          g.instar_grow_consecutiveErrors++;
+          return;
         }
-        return result;
-      });
 
-      addGrowLog(`Found ${postLinks.length} posts from ${searchLabel}.`, "info");
+        await new Promise((r) => setTimeout(r, 4000));
+        await page.evaluate(() => window.scrollBy(0, 600));
+        await new Promise((r) => setTimeout(r, 2000));
+
+        // Collect post links
+        postLinks = await page.evaluate(() => {
+          const links = Array.from(document.querySelectorAll("a[href]")) as HTMLAnchorElement[];
+          const seen = new Set<string>();
+          const result: string[] = [];
+          for (const l of links) {
+            const href = l.href;
+            if ((href.includes("/p/") || href.includes("/reel/")) && !seen.has(href)) {
+              seen.add(href);
+              result.push(href);
+              if (result.length >= 20) break;
+            }
+          }
+          return result;
+        });
+
+        if (postLinks.length > 0) break;
+
+        if (attempt < maxTargetRetries - 1) {
+          addGrowLog(`No posts found for ${searchLabel}, trying next target...`, "warning");
+        }
+      }
 
       if (postLinks.length === 0) {
-        addGrowLog(`No posts found for ${searchLabel} — skipping.`, "warning");
+        addGrowLog(`No posts found across ${maxTargetRetries} targets — skipping tick.`, "warning");
         await page.close();
         return;
       }
+
+      addGrowLog(`Found ${postLinks.length} posts from ${searchLabel}.`, "info");
 
       // ── Load already-done actions from DB ────────────────────────────────
       const alreadyActedSet = new Set<string>(
