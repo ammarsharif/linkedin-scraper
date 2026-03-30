@@ -71,6 +71,8 @@ interface IgSession {
 
 interface GrowthSettings {
   targetHashtags: string[];
+  targetProfiles: string[];
+  targetKeywords: string[];
   dailyFollowLimit: number;
   dailyLikeLimit: number;
   dailyCommentLimit: number;
@@ -117,11 +119,14 @@ export default function InstarPage() {
   const [growLastRun, setGrowLastRun] = useState<string | null>(null);
   const [growLogs, setGrowLogs] = useState<CronLogEntry[]>([]);
   const [growLogsExpanded, setGrowLogsExpanded] = useState(true);
+  const [nextActionMode, setNextActionMode] = useState<string>("comment");
   const [growSettings, setGrowSettings] = useState<GrowthSettings>({
     targetHashtags: ["business", "entrepreneur", "marketing"],
-    dailyFollowLimit: 40,
-    dailyLikeLimit: 120,
-    dailyCommentLimit: 20,
+    targetProfiles: [],
+    targetKeywords: [],
+    dailyFollowLimit: 20,
+    dailyLikeLimit: 60,
+    dailyCommentLimit: 10,
     commentPrompt:
       "Write a short, genuine, relevant 1-sentence comment (no emojis, no hashtags) for an Instagram post about the topic provided. Be specific and insightful.",
     autoReplyEnabled: true,
@@ -130,6 +135,8 @@ export default function InstarPage() {
     enableComment: true,
   });
   const [hashtagInput, setHashtagInput] = useState("");
+  const [profileInput, setProfileInput] = useState("");
+  const [keywordInput, setKeywordInput] = useState("");
   const [dailyCounts, setDailyCounts] = useState<Record<string, number>>({});
   const [savingSettings, setSavingSettings] = useState(false);
 
@@ -166,11 +173,16 @@ export default function InstarPage() {
         setGrowSettings((prev) => ({
           ...prev,
           targetHashtags: data.settings.targetHashtags || prev.targetHashtags,
+          targetProfiles: data.settings.targetProfiles ?? prev.targetProfiles,
+          targetKeywords: data.settings.targetKeywords ?? prev.targetKeywords,
           dailyFollowLimit: data.settings.dailyFollowLimit ?? prev.dailyFollowLimit,
           dailyLikeLimit: data.settings.dailyLikeLimit ?? prev.dailyLikeLimit,
           dailyCommentLimit: data.settings.dailyCommentLimit ?? prev.dailyCommentLimit,
           commentPrompt: data.settings.commentPrompt || prev.commentPrompt,
           autoReplyEnabled: data.settings.autoReplyEnabled ?? prev.autoReplyEnabled,
+          enableLike: data.settings.enableLike ?? prev.enableLike,
+          enableFollow: data.settings.enableFollow ?? prev.enableFollow,
+          enableComment: data.settings.enableComment ?? prev.enableComment,
         }));
       }
       if (data.todayStats) setDailyCounts(data.todayStats);
@@ -198,6 +210,7 @@ export default function InstarPage() {
       setGrowLastRun(data.lastRun ?? null);
       setGrowLogs(data.logs ?? []);
       if (data.dailyCounts) setDailyCounts(data.dailyCounts);
+      if (data.nextActionMode) setNextActionMode(data.nextActionMode);
     } catch {}
   }, []);
 
@@ -318,6 +331,22 @@ export default function InstarPage() {
   // ── Growth cron actions ────────────────────────────────────────────────
   const toggleGrowCron = async () => {
     const action = growRunning ? "stop" : "start";
+
+    // When starting, always push the current UI settings to DB first.
+    // This ensures enable/disable toggles take effect immediately without
+    // requiring a manual "Save Settings" click before starting.
+    if (action === "start") {
+      try {
+        await fetch("/api/instar/grow/cron", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "update_settings", ...growSettings }),
+        });
+      } catch {
+        // Non-fatal — proceed with start anyway
+      }
+    }
+
     const res = await fetch("/api/instar/grow/cron", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -360,6 +389,30 @@ export default function InstarPage() {
       ...s,
       targetHashtags: s.targetHashtags.filter((t) => t !== tag),
     }));
+  };
+
+  const addProfile = () => {
+    const p = profileInput.trim().replace(/^@/, "");
+    if (p && !growSettings.targetProfiles.includes(p)) {
+      setGrowSettings((s) => ({ ...s, targetProfiles: [...s.targetProfiles, p] }));
+    }
+    setProfileInput("");
+  };
+
+  const removeProfile = (p: string) => {
+    setGrowSettings((s) => ({ ...s, targetProfiles: s.targetProfiles.filter((x) => x !== p) }));
+  };
+
+  const addKeyword = () => {
+    const kw = keywordInput.trim();
+    if (kw && !growSettings.targetKeywords.includes(kw)) {
+      setGrowSettings((s) => ({ ...s, targetKeywords: [...s.targetKeywords, kw] }));
+    }
+    setKeywordInput("");
+  };
+
+  const removeKeyword = (kw: string) => {
+    setGrowSettings((s) => ({ ...s, targetKeywords: s.targetKeywords.filter((x) => x !== kw) }));
   };
 
   const clearGrowLogs = async () => {
@@ -951,50 +1004,139 @@ export default function InstarPage() {
                   <div>
                     <h2 className="font-bold text-white">Growth Engine</h2>
                     <p className="text-xs" style={{ color: "#64748b" }}>
-                      {growRunning ? "Actively growing — follows, likes & comments" : "Stopped"}
+                      {growRunning
+                        ? "Actively growing — comment → follow → like rotation"
+                        : "Stopped — start to begin comment → follow → like rotation"}
                     </p>
                   </div>
                 </div>
-                <button
-                  onClick={toggleGrowCron}
-                  disabled={!igSession.exists}
-                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold transition-all cursor-pointer disabled:opacity-40"
-                  style={{
-                    background: growRunning ? "rgba(239,68,68,0.15)" : "rgba(225,48,108,0.15)",
-                    color: growRunning ? "#ef4444" : INSTAR_COLOR,
-                    border: `1px solid ${growRunning ? "rgba(239,68,68,0.3)" : "rgba(225,48,108,0.3)"}`,
-                  }}
-                >
-                  {growRunning ? <Square size={14} /> : <Zap size={14} />}
-                  {growRunning ? "Stop Growth" : "Start Growth"}
-                </button>
+                <div className="flex items-center gap-3">
+                  {/* Next action badge */}
+                  {growRunning && (
+                    <div
+                      className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border"
+                      style={{
+                        background:
+                          nextActionMode === "comment"
+                            ? "rgba(16,185,129,0.1)"
+                            : nextActionMode === "follow"
+                            ? "rgba(59,130,246,0.1)"
+                            : "rgba(239,68,68,0.1)",
+                        borderColor:
+                          nextActionMode === "comment"
+                            ? "rgba(16,185,129,0.25)"
+                            : nextActionMode === "follow"
+                            ? "rgba(59,130,246,0.25)"
+                            : "rgba(239,68,68,0.25)",
+                        color:
+                          nextActionMode === "comment"
+                            ? "#10b981"
+                            : nextActionMode === "follow"
+                            ? "#60a5fa"
+                            : "#ef4444",
+                      }}
+                    >
+                      {nextActionMode === "comment" ? (
+                        <MessageCircle size={11} />
+                      ) : nextActionMode === "follow" ? (
+                        <UserPlus size={11} />
+                      ) : (
+                        <Heart size={11} />
+                      )}
+                      Next: {nextActionMode}
+                    </div>
+                  )}
+                  <button
+                    onClick={toggleGrowCron}
+                    disabled={!igSession.exists}
+                    className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold transition-all cursor-pointer disabled:opacity-40"
+                    style={{
+                      background: growRunning ? "rgba(239,68,68,0.15)" : "rgba(225,48,108,0.15)",
+                      color: growRunning ? "#ef4444" : INSTAR_COLOR,
+                      border: `1px solid ${growRunning ? "rgba(239,68,68,0.3)" : "rgba(225,48,108,0.3)"}`,
+                    }}
+                  >
+                    {growRunning ? <Square size={14} /> : <Zap size={14} />}
+                    {growRunning ? "Stop Growth" : "Start Growth"}
+                  </button>
+                </div>
+              </div>
+
+              {/* Rotation info */}
+              <div
+                className="flex items-center gap-2 mb-4 px-4 py-2.5 rounded-xl"
+                style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}
+              >
+                <RefreshCw size={12} style={{ color: "#475569" }} />
+                <p className="text-xs" style={{ color: "#64748b" }}>
+                  <span style={{ color: "#10b981" }}>① Comment</span>
+                  {" → "}
+                  <span style={{ color: "#60a5fa" }}>② Follow</span>
+                  {" → "}
+                  <span style={{ color: "#ef4444" }}>③ Like</span>
+                  {" → repeat · 20 min interval · max 5 actions/tick"}
+                </p>
               </div>
 
               {/* Today's stats */}
               <div className="grid grid-cols-3 gap-3">
                 {[
-                  { key: "like", label: "Likes Today", icon: Heart, color: "#ef4444", limit: growSettings.dailyLikeLimit },
-                  { key: "follow", label: "Follows Today", icon: UserPlus, color: "#3b82f6", limit: growSettings.dailyFollowLimit },
-                  { key: "comment", label: "Comments Today", icon: MessageCircle, color: "#10b981", limit: growSettings.dailyCommentLimit },
-                ].map((stat) => (
-                  <div key={stat.key} className="p-4 rounded-xl" style={{ background: "rgba(255,255,255,0.03)" }}>
-                    <div className="flex items-center gap-2 mb-2">
-                      <stat.icon size={14} style={{ color: stat.color }} />
-                      <p className="text-xs" style={{ color: "#64748b" }}>{stat.label}</p>
+                  { key: "comment", label: "Comments Today", icon: MessageCircle, color: "#10b981", limit: growSettings.dailyCommentLimit, enabled: growSettings.enableComment },
+                  { key: "follow", label: "Follows Today", icon: UserPlus, color: "#3b82f6", limit: growSettings.dailyFollowLimit, enabled: growSettings.enableFollow },
+                  { key: "like", label: "Likes Today", icon: Heart, color: "#ef4444", limit: growSettings.dailyLikeLimit, enabled: growSettings.enableLike },
+                ].map((stat) => {
+                  const count = dailyCounts[stat.key] ?? 0;
+                  const limitReached = count >= stat.limit;
+                  return (
+                    <div
+                      key={stat.key}
+                      className="p-4 rounded-xl"
+                      style={{
+                        background: limitReached
+                          ? `${stat.color}11`
+                          : "rgba(255,255,255,0.03)",
+                        border: limitReached
+                          ? `1px solid ${stat.color}44`
+                          : "1px solid transparent",
+                        opacity: stat.enabled ? 1 : 0.45,
+                      }}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <stat.icon size={14} style={{ color: stat.color }} />
+                          <p className="text-xs" style={{ color: "#64748b" }}>{stat.label}</p>
+                        </div>
+                        {limitReached && (
+                          <span
+                            className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+                            style={{ background: `${stat.color}22`, color: stat.color }}
+                          >
+                            DONE
+                          </span>
+                        )}
+                        {!stat.enabled && (
+                          <span
+                            className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+                            style={{ background: "rgba(255,255,255,0.06)", color: "#475569" }}
+                          >
+                            OFF
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-2xl font-bold text-white">{count}</p>
+                      <p className="text-xs mt-1" style={{ color: "#475569" }}>of {stat.limit} limit</p>
+                      <div className="mt-2 h-1 rounded-full" style={{ background: "rgba(255,255,255,0.08)" }}>
+                        <div
+                          className="h-1 rounded-full transition-all"
+                          style={{
+                            background: stat.color,
+                            width: `${Math.min(100, (count / stat.limit) * 100)}%`,
+                          }}
+                        />
+                      </div>
                     </div>
-                    <p className="text-2xl font-bold text-white">{dailyCounts[stat.key] ?? 0}</p>
-                    <p className="text-xs mt-1" style={{ color: "#475569" }}>of {stat.limit} limit</p>
-                    <div className="mt-2 h-1 rounded-full" style={{ background: "rgba(255,255,255,0.08)" }}>
-                      <div
-                        className="h-1 rounded-full transition-all"
-                        style={{
-                          background: stat.color,
-                          width: `${Math.min(100, ((dailyCounts[stat.key] ?? 0) / stat.limit) * 100)}%`,
-                        }}
-                      />
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
 
               {growLastRun && (
@@ -1014,7 +1156,7 @@ export default function InstarPage() {
                 <Settings size={15} style={{ color: INSTAR_COLOR }} /> Growth Settings
               </h3>
 
-              {/* Target hashtags */}
+              {/* Target Hashtags */}
               <div>
                 <label className="block text-xs font-semibold mb-2" style={{ color: "#94a3b8" }}>
                   Target Hashtags
@@ -1057,6 +1199,104 @@ export default function InstarPage() {
                 </div>
               </div>
 
+              {/* Target Profiles */}
+              <div>
+                <label className="block text-xs font-semibold mb-1" style={{ color: "#94a3b8" }}>
+                  Target Profiles
+                </label>
+                <p className="text-xs mb-2" style={{ color: "#475569" }}>
+                  Browse posts directly from these accounts (e.g. competitor or niche influencer pages).
+                </p>
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {growSettings.targetProfiles.map((p) => (
+                    <span
+                      key={p}
+                      className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-sm font-medium"
+                      style={{ background: "rgba(59,130,246,0.12)", color: "#60a5fa" }}
+                    >
+                      <User size={11} />
+                      @{p}
+                      <button
+                        onClick={() => removeProfile(p)}
+                        className="ml-1 hover:text-white transition-colors cursor-pointer"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                  {growSettings.targetProfiles.length === 0 && (
+                    <span className="text-xs" style={{ color: "#334155" }}>No profiles added</span>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={profileInput}
+                    onChange={(e) => setProfileInput(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && addProfile()}
+                    placeholder="Add username (without @)"
+                    className="flex-1 px-4 py-2 rounded-xl text-sm text-white placeholder-gray-600 outline-none border transition-all"
+                    style={{ background: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.1)" }}
+                  />
+                  <button
+                    onClick={addProfile}
+                    className="px-4 py-2 rounded-xl text-sm font-semibold cursor-pointer"
+                    style={{ background: "rgba(59,130,246,0.15)", color: "#60a5fa" }}
+                  >
+                    Add
+                  </button>
+                </div>
+              </div>
+
+              {/* Target Keywords */}
+              <div>
+                <label className="block text-xs font-semibold mb-1" style={{ color: "#94a3b8" }}>
+                  Keyword Filter <span style={{ color: "#334155", fontWeight: 400 }}>(optional)</span>
+                </label>
+                <p className="text-xs mb-2" style={{ color: "#475569" }}>
+                  Only engage with posts whose caption contains at least one of these words.
+                  Leave empty to engage with all posts.
+                </p>
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {growSettings.targetKeywords.map((kw) => (
+                    <span
+                      key={kw}
+                      className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-sm font-medium"
+                      style={{ background: "rgba(16,185,129,0.12)", color: "#34d399" }}
+                    >
+                      {kw}
+                      <button
+                        onClick={() => removeKeyword(kw)}
+                        className="ml-1 hover:text-white transition-colors cursor-pointer"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                  {growSettings.targetKeywords.length === 0 && (
+                    <span className="text-xs" style={{ color: "#334155" }}>No filter — all posts</span>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={keywordInput}
+                    onChange={(e) => setKeywordInput(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && addKeyword()}
+                    placeholder="e.g. startup, growth, fitness"
+                    className="flex-1 px-4 py-2 rounded-xl text-sm text-white placeholder-gray-600 outline-none border transition-all"
+                    style={{ background: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.1)" }}
+                  />
+                  <button
+                    onClick={addKeyword}
+                    className="px-4 py-2 rounded-xl text-sm font-semibold cursor-pointer"
+                    style={{ background: "rgba(16,185,129,0.15)", color: "#34d399" }}
+                  >
+                    Add
+                  </button>
+                </div>
+              </div>
+
               {/* Action toggles */}
               <div>
                 <label className="block text-xs font-semibold mb-3" style={{ color: "#94a3b8" }}>
@@ -1089,29 +1329,42 @@ export default function InstarPage() {
               </div>
 
               {/* Daily limits */}
-              <div className="grid grid-cols-3 gap-4">
-                {[
-                  { key: "dailyLikeLimit" as const, label: "Daily Like Limit", max: 300 },
-                  { key: "dailyFollowLimit" as const, label: "Daily Follow Limit", max: 100 },
-                  { key: "dailyCommentLimit" as const, label: "Daily Comment Limit", max: 50 },
-                ].map((field) => (
-                  <div key={field.key}>
-                    <label className="block text-xs font-semibold mb-2" style={{ color: "#94a3b8" }}>
-                      {field.label}
-                    </label>
-                    <input
-                      type="number"
-                      min={0}
-                      max={field.max}
-                      value={growSettings[field.key]}
-                      onChange={(e) =>
-                        setGrowSettings((s) => ({ ...s, [field.key]: Number(e.target.value) }))
-                      }
-                      className="w-full px-3 py-2 rounded-xl text-sm text-white outline-none border transition-all"
-                      style={{ background: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.1)" }}
-                    />
-                  </div>
-                ))}
+              <div>
+                <div className="flex items-center gap-2 mb-3">
+                  <label className="text-xs font-semibold" style={{ color: "#94a3b8" }}>
+                    Daily Limits
+                  </label>
+                  <span
+                    className="text-xs px-2 py-0.5 rounded-md"
+                    style={{ background: "rgba(245,158,11,0.1)", color: "#f59e0b" }}
+                  >
+                    Safe: likes ≤ 60 · follows ≤ 20 · comments ≤ 10
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-4">
+                  {[
+                    { key: "dailyLikeLimit" as const, label: "Likes / day", max: 60 },
+                    { key: "dailyFollowLimit" as const, label: "Follows / day", max: 20 },
+                    { key: "dailyCommentLimit" as const, label: "Comments / day", max: 10 },
+                  ].map((field) => (
+                    <div key={field.key}>
+                      <label className="block text-xs font-semibold mb-2" style={{ color: "#94a3b8" }}>
+                        {field.label}
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={field.max}
+                        value={growSettings[field.key]}
+                        onChange={(e) =>
+                          setGrowSettings((s) => ({ ...s, [field.key]: Number(e.target.value) }))
+                        }
+                        className="w-full px-3 py-2 rounded-xl text-sm text-white outline-none border transition-all"
+                        style={{ background: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.1)" }}
+                      />
+                    </div>
+                  ))}
+                </div>
               </div>
 
               {/* Comment prompt */}
