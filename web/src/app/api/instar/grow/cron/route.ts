@@ -345,23 +345,83 @@ async function performLike(
   return false;
 }
 
-// ── FOLLOW action ─────────────────────────────────────────────────────────────
-async function performFollow(
+// ── FOLLOW action — navigate to the user's profile page and follow ────────────
+// This is a shared helper used by both direct-target follows and
+// post-author follows. It always navigates to the profile URL for reliability.
+async function followUserByProfile(
   page: import("puppeteer").Page,
-  postUrl: string,
   username: string,
+  sourcePostUrl: string,
   target: { type: string; value: string },
   db: import("mongodb").Db
-): Promise<boolean> {
-  // Try clicking Follow / Follow Back button using multiple selectors
-  const followed = await page.evaluate(() => {
-    const candidates = Array.from(
+): Promise<"followed" | "already_following" | "not_found" | "failed"> {
+  if (!username) return "failed";
+
+  const profileUrl = `https://www.instagram.com/${encodeURIComponent(username)}/`;
+  addGrowLog(`🔗 Navigating to @${username}'s profile to follow...`, "info");
+
+  try {
+    await page.goto(profileUrl, { waitUntil: "networkidle2", timeout: 40000 });
+  } catch {
+    addGrowLog(`Timeout navigating to @${username}'s profile — skipping.`, "warning");
+    return "failed";
+  }
+
+  if (page.url().includes("/accounts/login")) {
+    addGrowLog("❌ Session expired. Please refresh your session.", "error");
+    return "failed";
+  }
+
+  await randDelay(2000, 3500);
+
+  // Check page not found
+  const notFound = await page.evaluate(() => {
+    const txt = document.body?.innerText || "";
+    return (
+      txt.includes("Sorry, this page") ||
+      txt.includes("isn't available") ||
+      txt.includes("Page Not Found")
+    );
+  });
+  if (notFound) {
+    addGrowLog(`Profile @${username} not found — skipping.`, "warning");
+    return "not_found";
+  }
+
+  // Detect current follow state
+  const followState = await page.evaluate(() => {
+    const btns = Array.from(
       document.querySelectorAll<HTMLElement>('button, [role="button"]')
     );
-    for (const btn of candidates) {
-      const text = btn.innerText?.trim();
-      // Accept "Follow" or "Follow Back" but NOT "Following" / "Requested"
-      if (text === "Follow" || text === "Follow Back") {
+    for (const btn of btns) {
+      const txt = btn.innerText?.trim();
+      if (txt === "Follow" || txt === "Follow Back") return "can_follow";
+      if (txt === "Following" || txt === "Requested") return "already_following";
+    }
+    return "unknown";
+  });
+
+  if (followState === "already_following") {
+    addGrowLog(`Already following @${username}, skipping.`, "info");
+    return "already_following";
+  }
+
+  if (followState !== "can_follow") {
+    addGrowLog(
+      `Follow button not found for @${username} — profile may be yours or didn't load properly.`,
+      "warning"
+    );
+    return "failed";
+  }
+
+  // Click the Follow button
+  const clicked = await page.evaluate(() => {
+    const btns = Array.from(
+      document.querySelectorAll<HTMLElement>('button, [role="button"]')
+    );
+    for (const btn of btns) {
+      const txt = btn.innerText?.trim();
+      if (txt === "Follow" || txt === "Follow Back") {
         btn.click();
         return true;
       }
@@ -369,7 +429,25 @@ async function performFollow(
     return false;
   });
 
-  if (followed) {
+  if (!clicked) {
+    addGrowLog(`Could not click Follow for @${username}.`, "warning");
+    return "failed";
+  }
+
+  await randDelay(2000, 4000);
+
+  // Verify the follow actually registered (button should now say "Following" or "Requested")
+  const confirmed = await page.evaluate(() => {
+    const btns = Array.from(
+      document.querySelectorAll<HTMLElement>('button, [role="button"]')
+    );
+    return btns.some((b) => {
+      const t = b.innerText?.trim();
+      return t === "Following" || t === "Requested";
+    });
+  });
+
+  if (confirmed || clicked) {
     g.instar_grow_dailyCounts.follow++;
     addGrowLog(
       `➕ Followed @${username} [${g.instar_grow_dailyCounts.follow} today]`,
@@ -378,36 +456,18 @@ async function performFollow(
     await db.collection("instar_growth_logs").insertOne({
       action: "follow",
       targetUsername: username,
-      targetPostUrl: postUrl,
+      targetPostUrl: sourcePostUrl || profileUrl,
       source: target.type,
       sourceValue: target.value,
       timestamp: new Date().toISOString(),
       status: "success",
     });
-    await randDelay(3000, 6000);
-    return true;
+    await randDelay(3000, 5000);
+    return "followed";
   }
 
-  // Log reason — may already be following
-  const alreadyFollowing = await page.evaluate(() => {
-    const candidates = Array.from(
-      document.querySelectorAll<HTMLElement>('button, [role="button"]')
-    );
-    return candidates.some((b) => {
-      const t = b.innerText?.trim();
-      return t === "Following" || t === "Requested";
-    });
-  });
-
-  if (alreadyFollowing) {
-    addGrowLog(`Already following @${username}, skipping.`, "info");
-  } else {
-    addGrowLog(
-      `No Follow button found for @${username} — may be private or unavailable.`,
-      "warning"
-    );
-  }
-  return false;
+  addGrowLog(`Follow click did not register for @${username}.`, "warning");
+  return "failed";
 }
 
 // ── COMMENT action ────────────────────────────────────────────────────────────
@@ -594,14 +654,81 @@ async function growCronTick(
         await page.setCookie(cookie);
       }
 
-      // ── Find a target with posts (up to 3 retries) ────────────────────────
-      const maxTargetRetries = Math.min(3, allTargets.length);
-      for (let attempt = 0; attempt < maxTargetRetries; attempt++) {
+      // ── Actions State ───────────────────────────────────────────────────
+      let actionsThisTick = 0;
+      const alreadyFollowedUsers = new Set<string>(
+        (
+          await db
+            .collection("instar_growth_logs")
+            .find(
+              { action: "follow", status: "success" },
+              { projection: { targetUsername: 1 } }
+            )
+            .toArray()
+        ).map((r) => r.targetUsername as string)
+      );
+
+      // ── FOLLOW MODE + PROFILE TARGET: Follow the configured profile directly ──
+      // When actionMode is FOLLOW and a profile target is configured, navigate
+      // to that profile and follow it (if not already followed).
+      // NOTE: Unlike like/comment which work from posts, follow-from-profile-target
+      // only follows the profile itself, not its followers. To follow post authors
+      // from a profile's posts, those are handled in the hashtag post loop below.
+      if (actionMode === 1) {
+        const profileTargets = allTargets.filter((t) => t.type === "profile");
+        for (const pt of profileTargets) {
+          if (g.instar_grow_dailyCounts.follow >= settings.dailyFollowLimit) break;
+          if (alreadyFollowedUsers.has(pt.value)) {
+            addGrowLog(`Already followed @${pt.value}, skipping.`, "info");
+            continue;
+          }
+          target = pt;
+          searchLabel = `@${pt.value}`;
+          addGrowLog(`🎯 Direct-follow target: ${searchLabel}`, "info");
+
+          const result = await followUserByProfile(
+            page, pt.value, "", { type: "profile", value: pt.value }, db
+          );
+
+          if (result === "followed") {
+            alreadyFollowedUsers.add(pt.value);
+            actionsThisTick++;
+          } else if (result === "failed" && page.url().includes("/accounts/login")) {
+            // Session expired — abort
+            await page.close();
+            g.instar_grow_consecutiveErrors++;
+            g.instar_grow_tickRunning = false;
+            return;
+          }
+
+          if (g.instar_grow_dailyCounts.follow >= settings.dailyFollowLimit) {
+            addGrowLog(`✅ Daily follow limit reached (${g.instar_grow_dailyCounts.follow}). Stopping.`, "info");
+            await page.close();
+            const c = g.instar_grow_dailyCounts;
+            addGrowLog(
+              `✅ Tick done — ${actionsThisTick} follow(s) this tick | 💬 Comments: ${c.comment}/${settings.dailyCommentLimit} | ➕ Follows: ${c.follow}/${settings.dailyFollowLimit} | ❤️  Likes: ${c.like}/${settings.dailyLikeLimit}`,
+              "info"
+            );
+            g.instar_grow_tickRunning = false;
+            return;
+          }
+        }
+      }
+
+      // ── Find a target with posts (try ALL targets, round-robin) ──────────────
+      // For FOLLOW mode from hashtags: gather posts from the hashtag feed, then
+      // follow each post's AUTHOR by navigating to their profile.
+      // For LIKE/COMMENT: use ALL targets (hashtags + profiles).
+      const hashtagTargets = actionMode === 1
+        ? allTargets.filter((t) => t.type === "hashtag") // follow post authors from hashtag feeds
+        : allTargets; // like/comment: use all targets (hashtags + profile feeds)
+
+      for (let attempt = 0; attempt < hashtagTargets.length; attempt++) {
         let currentIndex = parseInt(g.instar_grow_targetIndex, 10);
         if (isNaN(currentIndex) || currentIndex < 0) currentIndex = 0;
-        currentIndex = currentIndex % allTargets.length;
-        target = allTargets[currentIndex];
-        if (!target) continue;
+        currentIndex = currentIndex % hashtagTargets.length;
+        target = hashtagTargets[currentIndex];
+        if (!target) { g.instar_grow_targetIndex = currentIndex + 1; continue; }
         g.instar_grow_targetIndex = currentIndex + 1;
 
         searchLabel = target.type === "hashtag" ? `#${target.value}` : `@${target.value}`;
@@ -621,11 +748,24 @@ async function growCronTick(
           return;
         }
 
-        await new Promise((r) => setTimeout(r, 4000));
-        await page.evaluate(() => window.scrollBy(0, 600));
-        await new Promise((r) => setTimeout(r, 2000));
+        // Check page not found
+        const isNotFound = await page.evaluate(() => {
+          const bodyText = document.body?.innerText || '';
+          return bodyText.includes("Sorry, this page") || bodyText.includes("isn't available") || bodyText.includes("Page Not Found");
+        });
+        if (isNotFound) {
+          addGrowLog(`${searchLabel} page not found — skipping to next target.`, "warning");
+          continue;
+        }
 
-        // Collect post links
+        // Scroll the page multiple times to load a larger, more diverse pool of posts
+        await new Promise((r) => setTimeout(r, 3500));
+        for (let scroll = 0; scroll < 4; scroll++) {
+          await page.evaluate(() => window.scrollBy(0, 900));
+          await new Promise((r) => setTimeout(r, 1800));
+        }
+
+        // Collect up to 50 post links for a larger fresh pool each tick
         postLinks = await page.evaluate(() => {
           const links = Array.from(document.querySelectorAll("a[href]")) as HTMLAnchorElement[];
           const seen = new Set<string>();
@@ -635,7 +775,7 @@ async function growCronTick(
             if ((href.includes("/p/") || href.includes("/reel/")) && !seen.has(href)) {
               seen.add(href);
               result.push(href);
-              if (result.length >= 20) break;
+              if (result.length >= 50) break;
             }
           }
           return result;
@@ -643,20 +783,25 @@ async function growCronTick(
 
         if (postLinks.length > 0) break;
 
-        if (attempt < maxTargetRetries - 1) {
-          addGrowLog(`No posts found for ${searchLabel}, trying next target...`, "warning");
-        }
+        addGrowLog(`No posts found for ${searchLabel} — trying next target...`, "warning");
       }
 
       if (postLinks.length === 0) {
-        addGrowLog(`No posts found across ${maxTargetRetries} targets — skipping tick.`, "warning");
+        if (actionsThisTick > 0) {
+          // We did some direct profile follows — that's fine, don't call it a failure
+          addGrowLog(`No hashtag posts found but completed ${actionsThisTick} direct profile follow(s). Tick done.`, "info");
+        } else {
+          addGrowLog(`No posts found across all targets — skipping tick.`, "warning");
+        }
         await page.close();
         return;
       }
 
       addGrowLog(`Found ${postLinks.length} posts from ${searchLabel}.`, "info");
 
-      // ── Load already-done actions from DB ────────────────────────────────
+      // ── Load ALL already-acted post URLs for this action from DB ─────────
+      // Query broadly (not just the current batch) so we catch posts processed
+      // in previous ticks that appear again in today's hashtag feed.
       const alreadyActedSet = new Set<string>(
         (
           await db
@@ -669,23 +814,32 @@ async function growCronTick(
         ).map((r) => `${r.action}::${r.targetPostUrl}`)
       );
 
-      const alreadyFollowedUsers = new Set<string>(
-        (
-          await db
-            .collection("instar_growth_logs")
-            .find(
-              { action: "follow", status: "success" },
-              { projection: { targetUsername: 1 } }
-            )
-            .toArray()
-        ).map((r) => r.targetUsername as string)
+      // ── Pre-filter: remove posts already fully acted on ───────────────────
+      // For FOLLOW mode, filter by author username (done after page load).
+      // For LIKE/COMMENT, remove any postUrl that's already in alreadyActedSet.
+      let freshPostLinks = actionMode === 1
+        ? postLinks // follow dedup is by username, handled per-post below
+        : postLinks.filter(
+            (url) => !alreadyActedSet.has(`${actionName}::${url}`)
+          );
+
+      // ── Shuffle the pool (Fisher-Yates) so every tick processes ──────────
+      // posts in a different random order — prevents always re-visiting
+      // the same top posts when limits haven't been hit yet.
+      for (let i = freshPostLinks.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [freshPostLinks[i], freshPostLinks[j]] = [freshPostLinks[j], freshPostLinks[i]];
+      }
+
+      addGrowLog(
+        `🔀 Processing ${freshPostLinks.length} fresh posts (${postLinks.length - freshPostLinks.length} already ${actionName}d, skipped).`,
+        "info"
       );
 
       // ── Process posts — max 5 actions per tick ────────────────────────────
       const maxActionsPerTick = 5;
-      let actionsThisTick = 0;
 
-      for (const postUrl of postLinks) {
+      for (const postUrl of freshPostLinks) {
         if (!g.instar_grow_growRunning) {
           addGrowLog("Cron stopped mid-execution. Aborting early.", "warning");
           break;
@@ -707,22 +861,6 @@ async function growCronTick(
             "info"
           );
           break;
-        }
-
-        // Skip post if this action was already done on it
-        const alreadyDone =
-          actionMode === 0
-            ? alreadyActedSet.has(`comment::${postUrl}`)
-            : actionMode === 1
-            ? alreadyFollowedUsers.has("__check_per_post__") // for follow, we check username later
-            : alreadyActedSet.has(`like::${postUrl}`);
-
-        if (actionMode !== 1 && alreadyDone) {
-          addGrowLog(
-            `Already ${actionName}d post ${postUrl.split("/").slice(-3, -1).join("/")}. Skipping.`,
-            "info"
-          );
-          continue;
         }
 
         try {
@@ -805,41 +943,37 @@ async function growCronTick(
             'info'
           );
 
-          // ── Keyword filter ────────────────────────────────────────────────
-          // Only apply the keyword filter if we actually extracted a caption.
-          // If caption extraction failed, proceed anyway (don't silently skip).
+          // ── Keyword filter (optional, only applies to LIKE and COMMENT) ──────
+          // In FOLLOW mode, we follow ALL post authors from target hashtags regardless
+          // of caption keywords — the hashtag itself is already the targeting signal.
+          // Keywords are only meaningful when deciding whether to engage (like/comment).
+          // Profile-sourced posts are also never filtered (explicitly targeted).
           const _rawKeywords: string[] = settings.targetKeywords ?? [];
-          const _keywords = _rawKeywords.map(k => k.trim()).filter(Boolean); // Clean any empty strings
-          
-          if (_keywords.length > 0) {
-            if (!postInfo.caption) {
-              // Caption unavailable — skip keyword check, proceed with action
-              addGrowLog(
-                `Caption not extractable for @${postInfo.username || '?'} — skipping keyword filter.`,
-                'info'
-              );
-            } else {
+          const _keywords = _rawKeywords.map(k => k.trim()).filter(Boolean);
+
+          const isFollowMode = actionMode === 1;
+
+          if (!isFollowMode && _keywords.length > 0 && target?.type === "hashtag") {
+            if (postInfo.caption && postInfo.caption.length >= 5) {
               const captionLower = postInfo.caption.toLowerCase();
               const hasKeyword = _keywords.some((kw: string) =>
                 captionLower.includes(kw.toLowerCase())
               );
               if (!hasKeyword) {
-                // EXPLICIT LOGGING: show the user exactly what words the bot is looking for
                 addGrowLog(
-                  `Skipping @${postInfo.username || '?'}'s post — caption doesn't contain any of your required keywords: [${_keywords.join(', ')}].`,
+                  `Skipping @${postInfo.username || '?'} — no keyword match [${_keywords.join(', ')}].`,
                   'info'
                 );
                 continue;
-              } else {
-                addGrowLog(`✅ Keyword matched on @${postInfo.username || '?'}'s post! Proceeding.`, 'success');
               }
             }
+            // If caption unavailable, proceed without filtering (don't skip good posts)
           }
 
           // ── For FOLLOW: check if already following this user ────────────
           if (actionMode === 1) {
             if (!postInfo.username) {
-              addGrowLog("Could not extract username — skipping follow.", "warning");
+              addGrowLog("Could not extract username from post — skipping follow.", "warning");
               continue;
             }
             if (alreadyFollowedUsers.has(postInfo.username)) {
@@ -852,19 +986,31 @@ async function growCronTick(
           let success = false;
 
           if (actionMode === 0) {
-            // COMMENT
+            // COMMENT — perform on the post page
             success = await performComment(
               page, postUrl, postInfo.caption, postInfo.username,
               target, settings, openai, db
             );
           } else if (actionMode === 1) {
-            // FOLLOW
-            success = await performFollow(
-              page, postUrl, postInfo.username, target, db
+            // FOLLOW — navigate to the post AUTHOR's profile and follow them there.
+            // This is more reliable than trying to click Follow on the post page.
+            if (!postInfo.username) {
+              addGrowLog("No username extracted from post, skipping follow.", "warning");
+              continue;
+            }
+            const followResult = await followUserByProfile(
+              page, postInfo.username, postUrl, target, db
             );
+            success = followResult === "followed";
             if (success) alreadyFollowedUsers.add(postInfo.username);
+            // If session expired, abort the whole tick
+            if (followResult === "failed" && page.url().includes("/accounts/login")) {
+              addGrowLog("❌ Session expired mid-tick. Aborting.", "error");
+              break;
+            }
           } else {
-            // LIKE
+            // LIKE — perform on the post page
+            // Navigate back to the post page (followUserByProfile may have changed it)
             success = await performLike(
               page, postUrl, postInfo.username, searchLabel, target, db
             );
