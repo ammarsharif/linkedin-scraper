@@ -1250,12 +1250,37 @@ export default function InstarPage() {
 
               {/* Target Keywords */}
               <div>
-                <label className="block text-xs font-semibold mb-1" style={{ color: "#94a3b8" }}>
-                  Keyword Filter <span style={{ color: "#334155", fontWeight: 400 }}>(optional)</span>
-                </label>
+                <div className="flex items-center gap-2 mb-1 flex-wrap">
+                  <label className="text-xs font-semibold" style={{ color: "#94a3b8" }}>
+                    Keyword Filter <span style={{ color: "#334155", fontWeight: 400 }}>(optional)</span>
+                  </label>
+                  {/* Mode badges — show which actions are affected */}
+                  <span className="flex items-center gap-1">
+                    <span
+                      className="text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1"
+                      style={{ background: "rgba(16,185,129,0.12)", color: "#34d399" }}
+                    >
+                      <MessageCircle size={9} /> Comment only
+                    </span>
+                    <span
+                      className="text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1"
+                      style={{ background: "rgba(255,255,255,0.04)", color: "#334155" }}
+                      title="Keywords do not filter likes"
+                    >
+                      <Heart size={9} /> Like — all posts
+                    </span>
+                    <span
+                      className="text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1"
+                      style={{ background: "rgba(255,255,255,0.04)", color: "#334155" }}
+                      title="Keywords do not filter follows"
+                    >
+                      <UserPlus size={9} /> Follow — all posts
+                    </span>
+                  </span>
+                </div>
                 <p className="text-xs mb-2" style={{ color: "#475569" }}>
-                  Only engage with posts whose caption contains at least one of these words.
-                  Leave empty to engage with all posts.
+                  Only leave a <span style={{ color: "#34d399" }}>Comment</span> on posts whose caption matches a keyword (so AI writes relevant replies).{" "}
+                  <span style={{ color: "#475569" }}>Likes and Follows engage with all posts from your targets regardless of keywords.</span>
                 </p>
                 <div className="flex flex-wrap gap-2 mb-3">
                   {growSettings.targetKeywords.map((kw) => (
@@ -1274,7 +1299,7 @@ export default function InstarPage() {
                     </span>
                   ))}
                   {growSettings.targetKeywords.length === 0 && (
-                    <span className="text-xs" style={{ color: "#334155" }}>No filter — all posts</span>
+                    <span className="text-xs" style={{ color: "#334155" }}>No filter — comments on all posts</span>
                   )}
                 </div>
                 <div className="flex gap-2">
