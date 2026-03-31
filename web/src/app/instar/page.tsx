@@ -38,7 +38,7 @@ import { BotSwitcher } from "@/components/BotSwitcher";
 const INSTAR_GRADIENT = "linear-gradient(135deg, #f09433, #e6683c, #dc2743, #cc2366, #bc1888)";
 const INSTAR_COLOR = "#e1306c";
 
-type TabId = "ig-auth" | "dm-reply" | "growth" | "content" | "logs";
+type TabId = "ig-auth" | "dm-reply" | "growth" | "logs";
 
 interface CronLogEntry {
   time: string;
@@ -455,7 +455,6 @@ export default function InstarPage() {
     { id: "ig-auth", label: "Instagram Auth", icon: Key },
     { id: "dm-reply", label: "DM Auto-Reply", icon: MessageCircle },
     { id: "growth", label: "Growth Engine", icon: TrendingUp },
-    { id: "content", label: "Content Ready", icon: Instagram },
     { id: "logs", label: "Analytics", icon: BarChart2 },
   ];
 
@@ -1462,10 +1461,7 @@ export default function InstarPage() {
           </div>
         )}
 
-        {/* ── Content Ready Tab ─────────────────────────────────────────── */}
-        {activeTab === "content" && (
-          <ContentReadyTab showToast={showToast} instarColor={INSTAR_COLOR} />
-        )}
+
 
         {/* ── Analytics Tab ─────────────────────────────────────────────── */}
         {activeTab === "logs" && (
@@ -1579,164 +1575,4 @@ export default function InstarPage() {
   );
 }
 
-// ── Content Ready sub-component ──────────────────────────────────────────
-function ContentReadyTab({
-  showToast,
-  instarColor,
-}: {
-  showToast: (msg: string, type: "success" | "error") => void;
-  instarColor: string;
-}) {
-  const [coraContent, setCoraContent] = useState<
-    { _id: string; persona_name?: string; content: string; created_at: string; platform: string; status: string }[]
-  >([]);
-  const [loading, setLoading] = useState(false);
-  const [posting, setPosting] = useState<string | null>(null);
-  const [copied, setCopied] = useState<string | null>(null);
 
-  const loadContent = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/cora?platform=instagram&status=approved");
-      const data = await res.json();
-      if (data.content) setCoraContent(data.content);
-    } catch {
-      // If Cora endpoint doesn't support filters, fall back to all content
-      try {
-        const res2 = await fetch("/api/cora");
-        const data2 = await res2.json();
-        const items = (data2.content || []).filter(
-          (c: { platform: string; status: string }) => c.platform === "instagram" || c.status === "approved"
-        );
-        setCoraContent(items);
-      } catch {}
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { loadContent(); }, [loadContent]);
-
-  const copyContent = (id: string, text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopied(id);
-    setTimeout(() => setCopied(null), 2000);
-    showToast("Caption copied to clipboard.", "success");
-  };
-
-  return (
-    <div className="animate-fade-in max-w-4xl mx-auto space-y-6">
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-2xl font-extrabold tracking-tight text-white mb-2">
-            Content{" "}
-            <span className="bg-clip-text text-transparent" style={{ backgroundImage: INSTAR_GRADIENT }}>
-              Ready
-            </span>
-          </h1>
-          <p className="text-sm" style={{ color: "#5a5e72" }}>
-            Approved content from Cora, formatted for Instagram. Copy the caption and post manually.
-          </p>
-        </div>
-        <button
-          onClick={loadContent}
-          disabled={loading}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold cursor-pointer"
-          style={{ background: "rgba(255,255,255,0.05)", color: "#94a3b8" }}
-        >
-          <RefreshCw size={13} className={loading ? "animate-spin" : ""} />
-          Refresh
-        </button>
-      </div>
-
-      {loading ? (
-        <div className="text-center py-12">
-          <RefreshCw size={20} className="mx-auto animate-spin mb-2" style={{ color: instarColor }} />
-          <p className="text-sm" style={{ color: "#64748b" }}>Loading content...</p>
-        </div>
-      ) : coraContent.length === 0 ? (
-        <div
-          className="p-8 rounded-2xl border text-center"
-          style={{ background: "rgba(0,0,0,0.3)", borderColor: "rgba(255,255,255,0.06)" }}
-        >
-          <Instagram size={32} className="mx-auto mb-3" style={{ color: instarColor, opacity: 0.4 }} />
-          <p className="font-semibold text-white mb-1">No Instagram content ready</p>
-          <p className="text-sm" style={{ color: "#64748b" }}>
-            Use <strong>Cora</strong> to repurpose LinkedIn content for Instagram, then approve it here.
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {coraContent.map((item) => (
-            <div
-              key={item._id}
-              className="p-5 rounded-2xl border"
-              style={{ background: "rgba(0,0,0,0.3)", borderColor: "rgba(255,255,255,0.06)" }}
-            >
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <Instagram size={14} style={{ color: instarColor }} />
-                  <span className="text-xs font-semibold" style={{ color: instarColor }}>Instagram</span>
-                  {item.persona_name && (
-                    <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: "rgba(255,255,255,0.06)", color: "#94a3b8" }}>
-                      {item.persona_name}
-                    </span>
-                  )}
-                  <span
-                    className="text-xs px-2 py-0.5 rounded-full"
-                    style={{
-                      background: item.status === "approved" ? "rgba(16,185,129,0.1)" : "rgba(255,255,255,0.05)",
-                      color: item.status === "approved" ? "#10b981" : "#94a3b8",
-                    }}
-                  >
-                    {item.status}
-                  </span>
-                </div>
-                <span className="text-xs" style={{ color: "#475569" }}>
-                  {new Date(item.created_at).toLocaleDateString()}
-                </span>
-              </div>
-
-              <p className="text-sm leading-relaxed whitespace-pre-wrap mb-4" style={{ color: "#e2e8f0" }}>
-                {item.content}
-              </p>
-
-              <div className="flex gap-2">
-                <button
-                  onClick={() => copyContent(item._id, item.content)}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer"
-                  style={{
-                    background: copied === item._id ? "rgba(16,185,129,0.15)" : "rgba(225,48,108,0.1)",
-                    color: copied === item._id ? "#10b981" : instarColor,
-                  }}
-                >
-                  {copied === item._id ? "✓ Copied!" : "Copy Caption"}
-                </button>
-                <a
-                  href="https://www.instagram.com/create/story"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer"
-                  style={{ background: "rgba(255,255,255,0.05)", color: "#94a3b8" }}
-                >
-                  <Eye size={11} /> Open Instagram
-                </a>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div
-        className="p-4 rounded-xl border"
-        style={{ background: "rgba(225,48,108,0.04)", borderColor: "rgba(225,48,108,0.12)" }}
-      >
-        <p className="text-xs" style={{ color: "#94a3b8" }}>
-          <strong style={{ color: instarColor }}>Note:</strong> Instagram requires images for feed posts.
-          Copy the caption, then create your post on Instagram with a relevant image.
-          DM Auto-Reply handles incoming messages automatically.
-        </p>
-      </div>
-    </div>
-  );
-}
