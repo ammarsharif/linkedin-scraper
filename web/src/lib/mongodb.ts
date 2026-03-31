@@ -96,6 +96,86 @@ export interface InstarSettings {
   lastUpdated: string;
 }
 
+// ── Xavier (Twitter/X) Interfaces ────────────────────────────────────────
+
+export interface XavierConfig {
+  _id?: string;
+  type: "tw_session";
+  auth_token: string;
+  ct0: string;
+  twid?: string;
+  username?: string;
+  rawCookies?: string;
+  savedAt: string;
+  status: "active" | "expired";
+}
+
+export interface XavierChatMessage {
+  role: "prospect" | "xavier" | "human_rep";
+  text: string;
+  timestamp: string;
+  source: "tw_inbox" | "xavier_auto" | "xavier_cron" | "manual";
+}
+
+export interface XavierConversationLog {
+  _id?: string;
+  conversationId: string;
+  senderUsername: string;
+  senderId?: string;
+  lastActivity: string;
+  createdAt: string;
+  messages: XavierChatMessage[];
+}
+
+export interface XavierGrowthLog {
+  _id?: string;
+  action: "follow" | "like" | "retweet" | "reply" | "dm" | "unfollow";
+  targetUsername?: string;
+  targetTweetUrl?: string;
+  sourceType?: "hashtag" | "keyword" | "profile";
+  sourceValue?: string;
+  content?: string;
+  timestamp: string;
+  status: "success" | "failed" | "skipped";
+  error?: string;
+  note?: string;
+}
+
+export interface XavierSettings {
+  _id?: string;
+  type: "growth_settings";
+  targetKeywords: string[];
+  targetHashtags: string[];
+  targetProfiles: string[];
+  dailyFollowLimit: number;
+  dailyLikeLimit: number;
+  dailyRetweetLimit: number;
+  dailyReplyLimit: number;
+  dailyDmLimit: number;
+  replyPrompt: string;
+  dmSystemPrompt: string;
+  enableLike: boolean;
+  enableFollow: boolean;
+  enableRetweet: boolean;
+  enableReply: boolean;
+  lastUpdated: string;
+}
+
+export interface XavierTweetRead {
+  _id?: string;
+  tweetId: string;
+  username: string;
+  displayName: string;
+  text: string;
+  tweetUrl: string;
+  likes: number;
+  retweets: number;
+  replies: number;
+  timestamp: string;
+  scrapedAt: string;
+  sourceQuery?: string;
+}
+
 // ── Collection Interfaces ─────────────────────────────────────────────────
 
 export interface StoredProfile {

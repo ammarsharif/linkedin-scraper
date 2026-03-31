@@ -31,3 +31,13 @@ yarn-error.log*
 
 # Puppeteer
 fb_puppeteer_profile/
+ig_puppeteer_profile/
+ig_puppeteer_profile_grow/
+xavier_puppeteer_inbox_profile/
+xavier_puppeteer_profile/
+*puppeteer_profile*/
+*.png
+fb_debug.json
+fb_graphql_payload.json
+ls_payloads.json
+final_reliable.json
