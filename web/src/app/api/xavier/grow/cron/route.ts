@@ -98,7 +98,7 @@ async function getSettings(forceFresh = false) {
       };
       return g.xavier_grow_settings as typeof DEFAULT_SETTINGS;
     }
-  } catch {}
+  } catch { }
   g.xavier_grow_settings = { ...DEFAULT_SETTINGS };
   return g.xavier_grow_settings as typeof DEFAULT_SETTINGS;
 }
@@ -143,7 +143,7 @@ async function getOrCreateBrowser(): Promise<Browser> {
     try {
       const pages = await g.xavier_grow_browser.pages();
       if (pages.length > 0) return g.xavier_grow_browser;
-    } catch {}
+    } catch { }
     g.xavier_grow_browser = null;
   }
 
@@ -230,11 +230,11 @@ async function getSearchTweets(
       const nameLinks = el.querySelectorAll('[data-testid="User-Name"] a, a[href^="/"]');
       let username = "";
       for (const a of Array.from(nameLinks) as HTMLAnchorElement[]) {
-         const h = a.getAttribute("href") || "";
-         if (h.length > 1 && !h.includes("/") && !h.startsWith("/status")) {
-           username = h.replace("/", "");
-           break;
-         }
+        const h = a.getAttribute("href") || "";
+        if (h.length > 1 && !h.includes("/") && !h.startsWith("/status")) {
+          username = h.replace("/", "");
+          break;
+        }
       }
       if (!username) {
         username = (nameLinks[1] as HTMLAnchorElement)?.href?.split("/").at(-1) ?? "";
@@ -851,15 +851,15 @@ async function growthTick() {
     await randDelay(2000, 3000);
 
     let loggedIn = await isLoggedIn(page);
-    
+
     // ── Handle Passcode Challenge ──────────────────────────────────────────
     if (!loggedIn && sessionDoc.passcode) {
       addLog("Checking for passcode challenge...", "info");
       const isChallenge = await page.evaluate(() => {
         return !!document.querySelector('input[name="challenge_response"]') ||
-               !!document.querySelector('[data-testid="ocfEnterTextTextInput"]') ||
-               document.body.innerText.includes("Enter the code") ||
-               document.body.innerText.includes("Check your email");
+          !!document.querySelector('[data-testid="ocfEnterTextTextInput"]') ||
+          document.body.innerText.includes("Enter the code") ||
+          document.body.innerText.includes("Check your email");
       });
 
       if (isChallenge) {
@@ -869,9 +869,9 @@ async function growthTick() {
           await input.type(sessionDoc.passcode, { delay: 100 });
           await randDelay(1000, 2000);
           await page.keyboard.press("Enter");
-          await page.waitForNavigation({ waitUntil: "networkidle2", timeout: 20000 }).catch(() => {});
+          await page.waitForNavigation({ waitUntil: "networkidle2", timeout: 20000 }).catch(() => { });
           await randDelay(3000, 5000);
-          
+
           // Re-check login
           loggedIn = await isLoggedIn(page);
         }
@@ -1032,7 +1032,7 @@ function stopGrowth() {
 
   // Close browser
   if (g.xavier_grow_browser) {
-    g.xavier_grow_browser.close().catch(() => {});
+    g.xavier_grow_browser.close().catch(() => { });
     g.xavier_grow_browser = null;
   }
   return "stopped";
@@ -1077,7 +1077,7 @@ export async function POST(req: NextRequest) {
 
     if (action === "tick") {
       // Manual single tick (for testing)
-      growthTick().catch(() => {});
+      growthTick().catch(() => { });
       return NextResponse.json({ success: true, message: "Manual tick triggered." });
     }
 
