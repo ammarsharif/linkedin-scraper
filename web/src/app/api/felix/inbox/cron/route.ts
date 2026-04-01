@@ -120,19 +120,31 @@ async function cronTick(c_user: string, xs: string, datr: string | null) {
        let match = false;
        let reason = "";
        
-       // 1. Explicit indicators
-       if (ariaLower.includes("unread") || textLower.includes("unread") || t.svgFills.includes('#0866FF') || t.svgFills.includes('#0866ff')) {
+       // 1. Explicit indicators in ARIA or Text
+       if (
+          ariaLower.includes("unread") || 
+          textLower.includes("unread") || 
+          ariaLower.includes("new message") ||
+          ariaLower.includes("nouveau message") || // French
+          ariaLower.includes("mensaje nuevo") ||   // Spanish
+          t.svgFills.includes("#0866FF")            // Still a good strong indicator if present
+       ) {
           match = true;
-          reason = "Unread indicators present (aria/text/blue-dot)";
+          reason = "Unread indicators present (aria/text/svg)";
        }
 
-       // 2. Auto-Read Edge Case
+       // 2. Structural matching: if it doesn't say "You:" it's likely a message from them
+       // but only if it's not already matched above. 
+       if (!match && !textLower.includes("you:") && !textLower.includes("vous:") && t.text.length > 5) {
+          match = true; 
+          reason = "Implicit unread: Last message not from user";
+       }
+
+       // 3. Auto-Read Edge Case: if we are already on this thread but it has unread content
        if (!match && t.threadId && page.url().includes(t.threadId)) {
-          if (!t.text.includes("You:")) {
+          if (!t.text.toLowerCase().includes("you:")) {
              match = true;
              reason = "Current open thread and last message not from You";
-          } else {
-             reason = "Current open thread but last message IS from You";
           }
        }
 
@@ -182,20 +194,32 @@ async function cronTick(c_user: string, xs: string, datr: string | null) {
       // Wait for chat history to fully decrypt and render
       await new Promise(r => setTimeout(r, 4000));
 
-      // Snag the latest message
-      const latestMessage = await page.evaluate(() => {
-        const rows = Array.from(document.querySelectorAll('[role="row"], div[dir="auto"]'));
-        if (rows.length === 0) return "";
-        // Take the last visible text chunk
-        for (let i = rows.length - 1; i >= 0; i--) {
-            const txt = (rows[i] as HTMLElement).innerText;
-            if (txt && txt.trim().length > 0) return txt.trim();
-        }
-        return "";
-      });
+      // Snag the latest message (with retry loop for E2EE sync / "Loading...")
+      let latestMessage = "";
+      for (let attempt = 0; attempt < 3; attempt++) {
+        latestMessage = await page.evaluate(() => {
+          const rows = Array.from(document.querySelectorAll('[role="row"], div[dir="auto"]'));
+          if (rows.length === 0) return "";
+          // Take the last visible text chunk
+          for (let i = rows.length - 1; i >= 0; i--) {
+              const txt = (rows[i] as HTMLElement).innerText?.trim() || "";
+              if (txt.length > 0) return txt;
+          }
+          return "";
+        });
 
-      if (!latestMessage) {
-        addCronLog(`Could not read text for thread ${thread.threadId}. E2EE sync pending?`, "warning");
+        if (latestMessage && latestMessage.toLowerCase() !== "loading..." && latestMessage.length > 0) {
+          break;
+        }
+        
+        if (attempt < 2) {
+          addCronLog(`Message is still "${latestMessage || 'empty'}" — waiting for E2EE sync...`, "info");
+          await new Promise(r => setTimeout(r, 4000));
+        }
+      }
+
+      if (!latestMessage || latestMessage.toLowerCase() === "loading...") {
+        addCronLog(`Could not read text for thread ${thread.threadId}. E2EE sync pending or message is "Loading...". Skipping.`, "warning");
         continue;
       }
 

@@ -19,6 +19,7 @@ if (g.instar_inbox_initialized === undefined) {
   g.instar_inbox_processedThreadIds = new Set();
   g.instar_inbox_consecutiveErrors = 0;
   g.instar_inbox_autoAcceptRequests = true;
+  g.instar_inbox_tickRunning = false;
   g.instar_inbox_systemPrompt =
     "You are a professional Instagram assistant. Reply briefly, warmly and professionally to Instagram Direct Messages on behalf of the user. Keep replies under 3 sentences. Be friendly and authentic.";
 }
@@ -91,63 +92,58 @@ interface IGAPIThread {
 
 async function navigateTo(page: Page, url: string): Promise<void> {
   try {
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+    // Wait for networkidle2 as Instagram often does late-loading redirects
+    await page.goto(url, { waitUntil: "networkidle2", timeout: 40000 });
   } catch (e: any) {
-    if (!e.message?.includes("ERR_ABORTED")) throw e;
+    if (!e.message?.includes("ERR_ABORTED") && !e.message?.includes("net::")) throw e;
   }
-  await new Promise((r) => setTimeout(r, 4000));
+  // Extra stability wait
+  await new Promise((r) => setTimeout(r, 6000));
 }
 
 /**
- * Fetch DM threads via Instagram's private API, executed inside the Puppeteer
- * page context so session cookies are automatically included.
+ * Fetch the direct message inbox via Instagram's internal JSON API.
+ * This is much faster and more reliable than DOM scraping the sidebar.
  */
-async function fetchIGThreads(
-  page: Page,
-  isPending: boolean,
-): Promise<IGAPIThread[]> {
-  const endpoint = isPending
-    ? "https://www.instagram.com/api/v1/direct_v2/pending_inbox/?visual_message_return_type=unseen&direction=older&limit=20"
-    : "https://www.instagram.com/api/v1/direct_v2/inbox/?visual_message_return_type=unseen&direction=older&limit=20";
+async function fetchIGThreads(page: Page, pending: boolean): Promise<IGAPIThread[]> {
+  const url = pending
+    ? "https://www.instagram.com/api/v1/direct_v2/pending_inbox/"
+    : "https://www.instagram.com/api/v1/direct_v2/inbox/?persistent_badging=true&folder=0&thread_message_limit=1&limit=20";
 
-  const result = await page.evaluate(async (url: string) => {
-    const csrf =
-      document.cookie
-        .split(";")
-        .find((c) => c.trim().startsWith("csrftoken="))
-        ?.split("=")[1] || "";
-    try {
-      const res = await fetch(url, {
-        headers: {
-          "X-CSRFToken": csrf,
-          "X-IG-App-ID": "936619743392459",
-          "X-Requested-With": "XMLHttpRequest",
-          Accept: "*/*",
-        },
-        credentials: "include",
-      });
-      const text = await res.text();
-      if (!res.ok) return { error: `HTTP ${res.status}: ${text.slice(0, 200)}`, threads: [] };
-      const data = JSON.parse(text);
-      const threads =
-        data.inbox?.threads ||
-        data.pending_inbox?.threads ||
-        [];
-      return { threads };
-    } catch (e: any) {
-      return { error: e.message, threads: [] };
-    }
-  }, endpoint);
+  const result = await page.evaluate(
+    async (apiUrl: string) => {
+      const csrf =
+        document.cookie
+          .split(";")
+          .find((c) => c.trim().startsWith("csrftoken="))
+          ?.split("=")[1] || "";
+      try {
+        const res = await fetch(apiUrl, {
+          headers: {
+            "X-CSRFToken": csrf,
+            "X-IG-App-ID": "936619743392459",
+            "X-Requested-With": "XMLHttpRequest",
+            Accept: "*/*",
+          },
+          credentials: "include",
+        });
+        const data = await res.json();
+        return { threads: data.inbox?.threads || data.threads || [], error: null };
+      } catch (e: any) {
+        return { threads: [], error: e.message };
+      }
+    },
+    url,
+  );
 
   if (result.error) {
-    addCronLog(`IG API error (${isPending ? "requests" : "inbox"}): ${result.error}`, "error");
-    return [];
+    addCronLog(`IG API (${pending ? "pending" : "inbox"}) error: ${result.error}`, "warning");
+  } else {
+    addCronLog(
+      `IG API (${pending ? "pending" : "inbox"}): ${result.threads.length} thread(s) returned.`,
+      "info",
+    );
   }
-
-  addCronLog(
-    `IG API (${isPending ? "requests" : "inbox"}): ${result.threads.length} thread(s) returned.`,
-    "info",
-  );
   return result.threads as IGAPIThread[];
 }
 
@@ -207,24 +203,60 @@ async function fetchThreadMessages(
 }
 
 /**
- * Type and send a reply in the currently open thread.
- * Returns true on success.
+ * Type and send a reply with retry logic for "context destroyed" errors.
  */
 async function sendReply(page: Page, reply: string): Promise<boolean> {
-  // Use broad selector – Instagram may or may not have role="textbox"
-  const textboxSelector = 'div[contenteditable="true"]';
-  try {
-    await page.waitForSelector(textboxSelector, { timeout: 15000 });
-    await page.click(textboxSelector);
-    await new Promise((r) => setTimeout(r, 400));
-    await page.keyboard.type(reply, { delay: 30 });
-    await page.keyboard.press("Enter");
-    await new Promise((r) => setTimeout(r, 2000));
-    return true;
-  } catch (e: any) {
-    addCronLog(`Compose box not found: ${e.message}`, "error");
-    return false;
+  const textboxSelectors = [
+    'div[aria-label="Message"]',
+    'div[aria-label="Message..."]',
+    'div[aria-label="Write a message…"]',
+    'div[role="textbox"][contenteditable="true"]',
+    'div[contenteditable="true"]',
+    'textarea[placeholder*="Message"]'
+  ];
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      // Ensure the page is truly settled
+      await new Promise(r => setTimeout(r, 2000));
+      
+      // Wait for at least one of these to appear
+      await page.waitForFunction((selectors: string[]) => {
+        for (const sel of selectors) {
+          if (document.querySelector(sel)) return true;
+        }
+        return false;
+      }, { timeout: 15000 }, textboxSelectors);
+
+      let box = null;
+      for (const sel of textboxSelectors) {
+        box = await page.$(sel);
+        if (box) break;
+      }
+
+      if (!box) throw new Error("No compose box found after wait.");
+
+      await box.focus();
+      await box.click();
+      await new Promise((r) => setTimeout(r, 800));
+      
+      await page.keyboard.type(reply, { delay: 40 });
+      await new Promise((r) => setTimeout(r, 600));
+      await page.keyboard.press("Enter");
+      
+      await new Promise((r) => setTimeout(r, 4000));
+      return true;
+    } catch (e: any) {
+      if (attempt === 0 && (e.message.includes("destroyed") || e.message.includes("context"))) {
+        addCronLog("Execution context destroyed — retrying interaction...", "warning");
+        await new Promise(r => setTimeout(r, 5000));
+        continue;
+      }
+      addCronLog(`Compose box not found: ${e.message}`, "error");
+      return false;
+    }
   }
+  return false;
 }
 
 /**
@@ -267,103 +299,71 @@ async function processThread(
             el.textContent?.trim() === "Accept",
         );
         if (!btn) return null;
-        const r = btn.getBoundingClientRect();
-        return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+        const rect = btn.getBoundingClientRect();
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
       });
 
       if (coords) {
-        await page.mouse.click(coords.x, coords.y); // real native mouse event → React fires
-        addCronLog(`Accepted request from ${thread.senderName}.`, "success");
-        // Wait for compose box to appear (confirms transition to chat view)
-        await page
-          .waitForSelector('div[contenteditable="true"]', { timeout: 15000 })
-          .catch(() =>
-            addCronLog("Compose box slow to appear after accept.", "warning"),
-          );
-      } else {
-        addCronLog(
-          `Accept button not found for ${thread.senderName} – treating as already accepted.`,
-          "warning",
-        );
+        addCronLog(`Found 'Accept' button. Clicking via mouse...`, "info");
+        await page.mouse.click(coords.x, coords.y);
+        await new Promise((r) => setTimeout(r, 3000));
       }
     } catch (e: any) {
-      addCronLog(`Accept step error: ${e.message}`, "warning");
+      addCronLog(`Could not click Accept: ${e.message}`, "warning");
     }
   }
 
-  const threadId = thread.threadId;
+  // Read full conversation history
+  const history = await fetchThreadMessages(page, thread.threadId, viewerId);
+  const prospectMsg = history.filter((m) => !m.isMine).pop()?.text || thread.lastMessage;
 
-  // Fetch full messages via API
-  const messages = await fetchThreadMessages(page, threadId, viewerId);
-  const lastUserMsg = messages.filter((m: { text: string; isMine: boolean }) => !m.isMine).pop();
-  const incomingText = lastUserMsg?.text || thread.lastMessage;
-
-  if (!incomingText || incomingText.trim().length < 2) {
-    addCronLog(`No readable message from ${thread.senderName}.`, "warning");
+  if (!prospectMsg) {
+    addCronLog(`No message text found for ${thread.senderName}, skipping.`, "warning");
     return false;
   }
 
-  addCronLog(`Generating reply to: "${incomingText.slice(0, 50)}..."`, "info");
-
-  const completion = await openai.chat.completions.create({
+  addCronLog(`Generating reply to: "${prospectMsg.slice(0, 40)}..."`, "info");
+  const aiRes = await openai.chat.completions.create({
     model: "gpt-4o-mini",
     messages: [
       { role: "system", content: g.instar_inbox_systemPrompt },
-      {
-        role: "user",
-        content: `Message from ${thread.senderName}: ${incomingText}`,
-      },
+      { role: "user", content: prospectMsg },
     ],
-    temperature: 0.7,
     max_tokens: 150,
   });
-
-  const reply = completion.choices[0]?.message?.content?.trim() || "";
-  if (!reply) {
-    addCronLog("Empty AI reply.", "warning");
-    return false;
-  }
+  const reply = aiRes.choices[0].message?.content || "";
 
   addCronLog(`Sending reply: "${reply.slice(0, 50)}..."`, "info");
-  const sent = await sendReply(page, reply);
+  const ok = await sendReply(page, reply);
 
-  if (!sent) {
-    addCronLog(`Failed to send reply to ${thread.senderName}.`, "error");
-    return false;
-  }
-
-  // Save to DB
-  const logsCollection = db.collection("instar_conversation_logs");
-  const prospectMsg: InstarChatMessage = {
-    role: "prospect",
-    text: incomingText,
-    timestamp: new Date().toISOString(),
-    source: "ig_inbox",
-  };
-  const botMsg: InstarChatMessage = {
-    role: "instar",
-    text: reply,
-    timestamp: new Date().toISOString(),
-    source: "instar_cron",
-  };
-
-  const existingLog = await logsCollection.findOne({ threadId });
-  if (existingLog) {
-    await logsCollection.updateOne(
-      { threadId },
+  if (ok) {
+    // Save to DB for tracking
+    const botMsg: InstarChatMessage = {
+      role: "instar",
+      text: reply,
+      timestamp: new Date().toISOString(),
+      source: "instar_cron",
+    };
+    const userMsg: InstarChatMessage = {
+      role: "prospect",
+      text: prospectMsg,
+      timestamp: new Date().toISOString(),
+      source: "ig_inbox",
+    };
+    // Upsert conversation log
+    await db.collection("instar_conversation_logs").updateOne(
+      { threadId: thread.threadId },
       {
-        $push: { messages: { $each: [prospectMsg, botMsg] } } as any,
-        $set: { lastActivity: new Date().toISOString() },
+        $set: {
+          senderName: thread.senderName,
+          senderUsername: thread.senderName,
+          lastActivity: new Date().toISOString(),
+          createdAt: new Date().toISOString(),
+        },
+        $push: { messages: { $each: [userMsg, botMsg] } }
       },
+      { upsert: true }
     );
-  } else {
-    await logsCollection.insertOne({
-      threadId,
-      senderUsername: thread.senderName,
-      lastActivity: new Date().toISOString(),
-      createdAt: new Date().toISOString(),
-      messages: [prospectMsg, botMsg],
-    } as any);
   }
 
   g.instar_inbox_processedThreadIds.add(cacheKey);
@@ -378,11 +378,12 @@ async function dmCronTick(
   csrftoken: string,
   mid?: string,
 ) {
-  if (!g.instar_inbox_cronRunning) return;
-  g.instar_inbox_lastCronRun = new Date().toISOString();
-  addCronLog("Checking Instagram DMs via Puppeteer...", "info");
-
+  if (!g.instar_inbox_cronRunning || g.instar_inbox_tickRunning) return;
+  g.instar_inbox_tickRunning = true;
+  
   try {
+    g.instar_inbox_lastCronRun = new Date().toISOString();
+    addCronLog("Checking Instagram DMs via Puppeteer...", "info");
     const browser = await getBrowser();
     const pages = await browser.pages();
     let page = pages.find((p) => p.url().includes("instagram.com")) as
@@ -519,13 +520,10 @@ async function dmCronTick(
           // Only cache on success so failed attempts are retried next tick
           if (ok) g.instar_inbox_processedThreadIds.add(cacheKey);
         } catch (err: any) {
-          addCronLog(
-            `Error processing request thread ${threadId}: ${err.message}`,
-            "error",
-          );
+          addCronLog(`Error processing request thread ${threadId}: ${err.message}`, "error");
         }
       }
-    }
+    };
 
     if (unreadInbox.length === 0) {
       addCronLog("No unread DMs found.", "info");
@@ -540,6 +538,8 @@ async function dmCronTick(
       g.instarBrowser = undefined;
       g.instar_inbox_consecutiveErrors = 0;
     }
+  } finally {
+    g.instar_inbox_tickRunning = false;
   }
 }
 
@@ -627,7 +627,7 @@ export async function POST(req: NextRequest) {
       dmCronTick(sessionid, ds_user_id, csrftoken, mid);
       g.instar_inbox_cronInterval = setInterval(
         () => dmCronTick(sessionid, ds_user_id, csrftoken, mid),
-        60_000,
+        90_000,
       );
 
       return NextResponse.json({ success: true, message: "DM cron started." });

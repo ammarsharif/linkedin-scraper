@@ -994,7 +994,12 @@ export default function XavierPage() {
                     <TrendingUp size={20} style={{ color: growRunning ? X_COLOR : "#64748b" }} />
                   </div>
                   <div>
-                    <h2 className="font-bold text-white">Growth Engine</h2>
+                    <div className="flex items-center gap-2">
+                      <h2 className="font-bold text-white">Growth Engine</h2>
+                      <span className="text-[9px] px-1.5 py-0.5 rounded-full font-extrabold uppercase tracking-tighter" style={{ background: "rgba(34,197,94,0.15)", color: "#22c55e", border: "1px solid rgba(34,197,94,0.2)" }}>
+                        Stable Mode
+                      </span>
+                    </div>
                     <p className="text-xs" style={{ color: "#64748b" }}>
                       {growRunning
                         ? "Actively growing — engaging with targets"
@@ -1475,7 +1480,12 @@ export default function XavierPage() {
                     <MessageCircle size={20} style={{ color: dmRunning ? "#10b981" : "#64748b" }} />
                   </div>
                   <div>
-                    <h2 className="font-bold text-white">DM Auto-Reply</h2>
+                    <div className="flex items-center gap-2">
+                      <h2 className="font-bold text-white">DM Auto-Reply</h2>
+                      <span className="text-[9px] px-1.5 py-0.5 rounded-full font-extrabold uppercase tracking-tighter" style={{ background: "rgba(34,197,94,0.15)", color: "#22c55e", border: "1px solid rgba(34,197,94,0.2)" }}>
+                        Network Intercept
+                      </span>
+                    </div>
                     <p className="text-xs" style={{ color: "#64748b" }}>
                       {dmRunning ? "Monitoring Twitter DMs" : "Stopped — not watching DMs"}
                     </p>

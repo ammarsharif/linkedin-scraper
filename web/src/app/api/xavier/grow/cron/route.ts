@@ -217,18 +217,30 @@ async function getSearchTweets(
 
   return page.evaluate(() => {
     const results: { tweetUrl: string; username: string; tweetText: string }[] = [];
-    const articles = Array.from(document.querySelectorAll('[data-testid="tweet"]')).slice(0, 10);
+    // Primary: [data-testid="tweet"]
+    // Fallback: <article> elements which X uses for all tweets
+    const articles = Array.from(document.querySelectorAll('[data-testid="tweet"], article')).slice(0, 10);
 
     for (const el of articles) {
       const linkEl = el.querySelector('a[href*="/status/"]') as HTMLAnchorElement | null;
       if (!linkEl) continue;
       const tweetUrl = "https://x.com" + linkEl.getAttribute("href")?.split("?")[0];
 
-      const nameLinks = el.querySelectorAll('[data-testid="User-Name"] a');
-      const username =
-        (nameLinks[1] as HTMLAnchorElement)?.href?.split("/").at(-1) ?? "";
+      // Username: prefer data-testid="User-Name", fall back to scanning all links
+      const nameLinks = el.querySelectorAll('[data-testid="User-Name"] a, a[href^="/"]');
+      let username = "";
+      for (const a of Array.from(nameLinks) as HTMLAnchorElement[]) {
+         const h = a.getAttribute("href") || "";
+         if (h.length > 1 && !h.includes("/") && !h.startsWith("/status")) {
+           username = h.replace("/", "");
+           break;
+         }
+      }
+      if (!username) {
+        username = (nameLinks[1] as HTMLAnchorElement)?.href?.split("/").at(-1) ?? "";
+      }
 
-      const textEl = el.querySelector('[data-testid="tweetText"]');
+      const textEl = el.querySelector('[data-testid="tweetText"]') || el.querySelector('[dir="auto"]');
       const tweetText = (textEl as HTMLElement)?.innerText?.trim() ?? "";
 
       if (tweetUrl && username) {
@@ -415,10 +427,11 @@ async function followUser(
       const btn = document.querySelector('[data-testid="followButton"]') as HTMLElement | null;
       if (btn) { btn.click(); return true; }
 
-      const allBtns = Array.from(document.querySelectorAll('button'));
-      for (const b of allBtns) {
+      const allBtns = Array.from(document.querySelectorAll('button, [role="button"]'));
+      for (const b of allBtns as HTMLElement[]) {
         const txt = b.innerText?.trim().toLowerCase();
-        if (txt === "follow" || txt === "follow back") {
+        const ariaValue = b.getAttribute("aria-label")?.toLowerCase() || "";
+        if (txt === "follow" || txt === "follow back" || ariaValue.includes("follow")) {
           b.click();
           return true;
         }
@@ -430,10 +443,11 @@ async function followUser(
 
     // Verify follow
     const confirmed = await page.evaluate(() => {
-      const allBtns = Array.from(document.querySelectorAll('button'));
+      const allBtns = Array.from(document.querySelectorAll('button, [role="button"]'));
       return allBtns.some((b) => {
-        const t = b.innerText?.trim().toLowerCase();
-        return t === "following" || t === "requested";
+        const t = (b as HTMLElement).innerText?.trim().toLowerCase();
+        const a = b.getAttribute("aria-label")?.toLowerCase() || "";
+        return t === "following" || t === "requested" || a.includes("following");
       });
     });
 
@@ -880,11 +894,44 @@ async function growthTick() {
       return;
     }
 
-    // Pick a random tweet from results (not always first)
+    // Execute action
+    if (actionMode === 3) {
+      // For REPLIES only: Filter by keyword to ensure on-topic engagement
+      const _keywords = (settings.targetKeywords || []).map((k: string) => k.toLowerCase().trim()).filter(Boolean);
+      const _hashtags = (settings.targetHashtags || []).map((h: string) => h.toLowerCase().trim().replace(/^#/, "")).filter(Boolean);
+      const allFilters = [..._keywords, ..._hashtags];
+
+      if (allFilters.length > 0) {
+        // Try to find a tweet in the top 5 results that matches the filter
+        const matches = tweets.slice(0, 8).filter(t => {
+          const txt = t.tweetText.toLowerCase();
+          return allFilters.some(f => txt.includes(f));
+        });
+
+        if (matches.length === 0) {
+          addLog(`No tweets from search results matched your keywords [${allFilters.join(', ')}]. Skipping reply.`, "warning");
+          return;
+        }
+
+        const pick = matches[Math.floor(Math.random() * Math.min(matches.length, 3))];
+        addLog(`Picked on-topic tweet by @${pick.username}: ${pick.tweetUrl}`, "info");
+
+        const res = await replyToTweet(page, pick.tweetUrl, pick.tweetText, settings.replyPrompt, db, target);
+        if (res === "replied") {
+          addLog(`Replied to @${pick.username}`, "success");
+          g.xavier_grow_consecutiveErrors = 0;
+        } else {
+          addLog(`Reply failed for @${pick.username}`, "error");
+          g.xavier_grow_consecutiveErrors++;
+        }
+        return;
+      }
+    }
+
+    // Default: Pick a random tweet from results (original logic)
     const pick = tweets[Math.floor(Math.random() * Math.min(tweets.length, 5))];
     addLog(`Picked tweet by @${pick.username}: ${pick.tweetUrl}`, "info");
 
-    // Execute action
     if (actionMode === 0) {
       // Like
       const res = await likeTweet(page, pick.tweetUrl, db, target);

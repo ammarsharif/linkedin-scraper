@@ -75,6 +75,76 @@ async function setTwitterCookies(page: Page, session: any) {
   }
 }
 
+// ── X DM API response parsers (network-intercept approach) ────────────────────
+function parseXInboxFromApiResponse(json: any, myUserId: string) {
+  const state =
+    json?.inbox_initial_state ||
+    json?.data?.inbox_initial_state ||
+    json?.data?.dm_inbox_state;
+  if (!state) return [];
+  const conversations = (state.conversations as Record<string, any>) || {};
+  const users = (state.users as Record<string, any>) || {};
+  return Object.values(conversations)
+    .filter((c: any) => c.conversation_id)
+    .slice(0, 10)
+    .map((conv: any) => {
+      const otherP =
+        (conv.participants || []).find((p: any) => p.user_id !== myUserId) ||
+        conv.participants?.[0];
+      const userInfo = users[otherP?.user_id || ""] || {};
+      const username = userInfo.screen_name || "";
+      const unread = (conv.unread_count ?? 0) > 0;
+      const href = `/messages/${conv.conversation_id}`;
+      return { conversationId: conv.conversation_id, username, href, unread, preview: "" };
+    })
+    .filter((c: any) => c.conversationId);
+}
+
+function parseXMessagesFromApiResponse(json: any, myUserId: string) {
+  // Try multiple response shapes from X's API
+  const timeline =
+    json?.data?.conversation_timeline ||
+    json?.conversation_timeline ||
+    {};
+  const entries: any[] =
+    (timeline.entries as any[]) || (json?.entries as any[]) || [];
+
+  const results: { text: string; isOutgoing: boolean; timestamp: string }[] = [];
+
+  for (const e of entries) {
+    // Shape 1: GraphQL DM timeline
+    const itemContent = e?.content?.item_content;
+    if (itemContent?.message) {
+      const msg = itemContent.message;
+      const text = msg.text || msg.message_data?.text || "";
+      const senderId = msg.sender_id || msg.message_data?.sender_id || "";
+      if (text) {
+        results.push({
+          text,
+          isOutgoing: senderId === myUserId,
+          timestamp: msg.sent_at_secs
+            ? new Date(parseInt(msg.sent_at_secs) * 1000).toISOString()
+            : new Date().toISOString(),
+        });
+      }
+      continue;
+    }
+    // Shape 2: REST inbox_initial_state message entries
+    const msg = e?.message?.message_data;
+    if (msg?.text) {
+      results.push({
+        text: msg.text,
+        isOutgoing: msg.sender_id === myUserId,
+        timestamp: msg.time
+          ? new Date(parseInt(msg.time)).toISOString()
+          : new Date().toISOString(),
+      });
+    }
+  }
+
+  return results.slice(-10).filter((m) => m.text.length > 0);
+}
+
 // ── DM Inbox Tick ─────────────────────────────────────────────────────────────
 async function inboxTick() {
   if (g.xavier_inbox_tickRunning) {
@@ -109,12 +179,44 @@ async function inboxTick() {
 
     await setTwitterCookies(page, sessionDoc);
 
-    // Navigate to DMs
-    await page.goto("https://x.com/messages", {
+    // ── Intercept X DM API responses (API-first approach) ────────────────────
+    let apiInboxData: any = null;
+    let apiConvData: any = null;
+    const _inboxApiHandler = async (res: import("puppeteer").HTTPResponse) => {
+      try {
+        const url = res.url();
+        if (
+          url.includes("inbox_initial_state") ||
+          url.includes("DmAllSearchSlice") ||
+          url.includes("InboxTimeline") ||
+          url.includes("DirectMessageConversation")
+        ) {
+          const json = await res.json().catch(() => null);
+          if (json) {
+             if (url.includes("DirectMessageConversation")) {
+               apiConvData = json;
+             } else {
+               apiInboxData = json;
+             }
+          }
+        }
+      } catch {}
+    };
+    page.on("response", _inboxApiHandler);
+    page.on("console", (msg) => {
+      // Filter out noisy messages but keep detection logs
+      if (msg.text().includes('XAVIER')) {
+        addLog(`Browser Log: ${msg.text()}`, "info");
+      }
+    });
+
+    // Navigate to DMs — X now uses /i/chat
+    await page.goto("https://x.com/i/chat", {
       waitUntil: "networkidle2",
       timeout: 40000,
     });
-    await randDelay(2000, 3500);
+    await randDelay(3000, 5000);
+    page.off("response", _inboxApiHandler);
 
     let loggedIn = await page.evaluate(
       () =>
@@ -163,32 +265,49 @@ async function inboxTick() {
       return;
     }
 
+    // ── API-first: use intercepted response if available ─────────────────────
+    const myUserId = (sessionDoc.twid || "").replace("u=", "");
+    const apiConversations = apiInboxData
+      ? parseXInboxFromApiResponse(apiInboxData, myUserId)
+      : [];
+    if (apiConversations.length > 0) {
+      addLog(`API: found ${apiConversations.length} conversation(s) — skipping DOM extraction`, "info");
+    }
+
     // Wait for conversations list to appear — try multiple selectors
     const CONV_SELECTORS = [
       '[data-testid="conversation"]',
       '[data-testid="DMConversation"]',
       '[data-testid="cellInnerDiv"]',
+      '[data-testid^="dm-conversation-item-"]',
+      'a[role="link"][href*="/messages/"]',
+      'a[role="link"][href*="/i/chat/"]',
     ];
     let selectorFound = false;
     for (const sel of CONV_SELECTORS) {
       try {
-        await page.waitForSelector(sel, { timeout: 5000 });
+        await page.waitForSelector(sel, { timeout: 15000 });
         selectorFound = true;
-        addLog(`Inbox loaded (selector: ${sel})`, "info");
+        addLog(`Inbox component visible (selector: ${sel})`, "info");
         break;
       } catch { /* try next */ }
     }
     if (!selectorFound) {
-      addLog("Inbox list not found — saving debug screenshot", "warning");
+      const debugInfo = await page.evaluate(() => {
+        const ids = Array.from(document.querySelectorAll('[data-testid]')).map(el => el.getAttribute('data-testid'));
+        const links = Array.from(document.querySelectorAll('a')).map(a => a.getAttribute('href')).filter(h => h?.includes('messages'));
+        return { ids: [...new Set(ids)].slice(0, 50), links: [...new Set(links)] };
+      });
+      addLog(`Inbox list selector timeout — testids: ${debugInfo.ids.join(', ')} — links: ${debugInfo.links.join(', ')}`, "warning");
       await page.screenshot({ path: "./xavier_inbox_debug.png" }).catch(() => {});
     }
-    await randDelay(2000, 4000);
+    await randDelay(3000, 5000);
 
-    const conversations = await page.evaluate(() => {
+    const conversations = apiConversations.length > 0 ? apiConversations : await page.evaluate(() => {
       let rows: Element[] = [];
 
       // Strategy 1: primary data-testids
-      for (const sel of ['[data-testid="conversation"]', '[data-testid="DMConversation"]']) {
+      for (const sel of ['[data-testid="conversation"]', '[data-testid="DMConversation"]', '[data-testid^="dm-conversation-item-"]']) {
         rows = Array.from(document.querySelectorAll(sel));
         if (rows.length > 0) break;
       }
@@ -196,53 +315,102 @@ async function inboxTick() {
       // Strategy 2: cellInnerDiv wrappers that contain a messages link
       if (rows.length === 0) {
         rows = Array.from(document.querySelectorAll('[data-testid="cellInnerDiv"]'))
-          .filter(el => !!el.querySelector('a[href*="/messages/"]'));
+          .filter(el => !!el.querySelector('a[href*="/messages/"]') || !!el.querySelector('a[href*="/i/chat/"]'));
       }
 
       // Strategy 3: walk up from every unique /messages/{id} link
       if (rows.length === 0) {
+        // Find ALL links that look like a message conversation
+        const links = Array.from(document.querySelectorAll('a[href*="/messages/"], a[href*="/i/chat/"]')) as HTMLAnchorElement[];
+        console.log(`XAVIER: Found ${links.length} potential message links`);
+        
         const seen = new Set<string>();
-        rows = (Array.from(document.querySelectorAll('a[href]')) as HTMLAnchorElement[])
-          .filter(a => {
-            const h = a.getAttribute("href") || "";
-            if (!/^\/messages\/\d/.test(h) || seen.has(h)) return false;
-            seen.add(h);
-            return true;
-          })
-          .map(a => {
-            let node: Element = a;
-            while (node.parentElement && node.getBoundingClientRect().height < 60) {
-              node = node.parentElement;
-            }
-            return node;
-          });
+        for (const a of links) {
+          const h = a.getAttribute("href") || "";
+          // Skip the main inbox link itself
+          if (h.endsWith("/messages") || h.endsWith("/messages/") || h.endsWith("/i/chat") || h.endsWith("/i/chat/") || seen.has(h)) continue;
+          seen.add(h);
+          
+          let node: Element = a;
+          // Row detection: go up to find the full container that includes the unread dot
+          let count = 0;
+          while (node.parentElement && node.getBoundingClientRect().height < 80 && count < 8) {
+             node = node.parentElement;
+             count++;
+          }
+          // Final check: if it has a direct parent with a meaningful aria-label or testid, go there
+          if (node.parentElement?.getAttribute('data-testid')?.startsWith('dm-conversation-item-') ||
+              node.parentElement?.getAttribute('aria-label')?.toLowerCase().includes('conversation')) {
+            node = node.parentElement;
+          }
+          rows.push(node);
+        }
+        console.log(`XAVIER: Strategy 3 found ${rows.length} rows`);
       }
 
       return rows.slice(0, 10).map((row: any) => {
         const link: HTMLAnchorElement | null =
-          row.tagName === "A" ? row : row.querySelector('a[href*="/messages/"]');
+          row.tagName === "A" ? row : (row.querySelector('a[href*="/messages/"]') || row.querySelector('a[href*="/i/chat/"]'));
         const href = link?.getAttribute("href") || "";
         const conversationId = href.split("/").pop() || "";
 
-        // Username: prefer @handle span, fall back to dir="ltr"
+        // Username: use aria-label on the row, or pull all visible text nodes and pick the name
+        // The conversation item aria-label is typically "Conversation with DisplayName"
+        const ariaLabel = (row as HTMLElement).getAttribute("aria-label") ?? "";
+        const fromAriaLabel = ariaLabel.replace(/conversation with /i, "").trim();
+
+        // Fallback: first short text span that isn't @ and isn't the preview
         const allSpans = Array.from(row.querySelectorAll("span")) as HTMLElement[];
-        const atSpan = allSpans.find(s => s.textContent?.trim().startsWith("@"));
+        const atSpan = allSpans.find(s => s.textContent?.trim().startsWith("@") && s.textContent!.trim().length < 30);
+        const nameSpan = allSpans.find(s => {
+          const t = s.textContent?.trim() ?? "";
+          return t.length > 0 && t.length < 50 && !t.startsWith("@") && !t.match(/^\d/) && s.children.length === 0;
+        });
+
+        const displayName = fromAriaLabel || nameSpan?.textContent?.trim() || "";
         const username = atSpan
           ? atSpan.textContent!.trim().replace("@", "")
-          : (row.querySelector('[dir="ltr"] span') as HTMLElement)?.textContent?.trim() ?? "";
+          : displayName.replace(/\s+/g, "_").toLowerCase() || conversationId;
+
+        const ltrSpans = Array.from(row.querySelectorAll('[dir="ltr"]')) as HTMLElement[];
 
         const previewEl: HTMLElement | null =
           row.querySelector('[data-testid="tweetText"]') ||
           row.querySelector('[dir="auto"] span');
         const preview = previewEl?.innerText?.trim() ?? "";
 
-        // Unread: badge element OR SVG dot OR aria-label
-        const unread =
+        // Unread detection: X shows a filled blue circle for unread conversations
+        // Strategy 1: data-testid badges
+        const hasBadge =
           !!row.querySelector('[data-testid="unread-badge"]') ||
           !!row.querySelector('[data-testid="badge"]') ||
-          !!row.querySelector('span[aria-label*="nread"]');
+          !!row.querySelector('[aria-label*="unread"]') ||
+          !!row.querySelector('[aria-label*="New Message"]') ||
+          !!row.querySelector('[aria-label*="nread"]');
 
-        return { conversationId, username, preview, href, unread };
+        // Strategy 2: look for a small filled circle (the blue dot) by size + shape
+        const hasBlueCircle = !!Array.from(row.querySelectorAll('div, span')).find((el: any) => {
+          const w = el.offsetWidth;
+          const h = el.offsetHeight;
+          if (w < 4 || w > 20 || Math.abs(w - h) > 4) return false;
+          const style = window.getComputedStyle(el);
+          const bg = style.backgroundColor;
+          // Twitter blue variants
+          return bg.includes('29, 155') || bg.includes('1, 161') || bg.includes('0, 111') || bg.includes('29,155');
+        });
+
+        // Strategy 3: bold/heavy font-weight on the display name often indicates unread
+        const hasBoldName = ltrSpans.length > 0 && (() => {
+          const style = window.getComputedStyle(ltrSpans[0]);
+          const fw = parseInt(style.fontWeight || "400");
+          return fw >= 700;
+        })();
+
+        const unread = hasBadge || hasBlueCircle || hasBoldName;
+
+        console.log(`XAVIER: Row for @${username} (${displayName}) unread=${unread} badge=${hasBadge} circle=${hasBlueCircle} bold=${hasBoldName} preview="${preview.substring(0, 30)}"`);
+
+        return { conversationId, username, displayName, preview, href, unread };
       }).filter((c: any) => c.conversationId && /^\d/.test(c.conversationId));
     });
 
@@ -253,77 +421,166 @@ async function inboxTick() {
     for (const conv of conversations) {
       if (!conv.conversationId || !conv.href) continue;
 
-      // Check if we already logged this conversation
+      // Check DB for this conversation
       const existing = await db
         .collection("xavier_conversations")
         .findOne({ conversationId: conv.conversationId });
 
-      // Navigate into conversation
-      const convUrl = `https://x.com${conv.href}`;
-      await page.goto(convUrl, { waitUntil: "networkidle2", timeout: 35000 });
-      await randDelay(1500, 2500);
+      // Skip if we replied within the last 2 hours (avoid double-replies)
+      if (existing?.messages?.length) {
+        const lastXavierMsg = [...existing.messages].reverse().find((m: any) => m.role === "xavier");
+        if (lastXavierMsg) {
+          const msSinceReply = Date.now() - new Date(lastXavierMsg.timestamp).getTime();
+          if (msSinceReply < 2 * 60 * 60 * 1000) {
+            // Still skip unread: if it says unread=false AND we replied recently, skip
+            if (!conv.unread) {
+              addLog(`@${conv.username}: replied recently (${Math.round(msSinceReply / 60000)}m ago) — skipping`, "info");
+              continue;
+            }
+          }
+        }
+      }
 
-      // Wait for message entries to load
-      await page.waitForSelector(
-        '[data-testid="messageEntry"], [data-testid="DM_Message_container"], [data-testid="cellInnerDiv"]',
-        { timeout: 10000 }
-      ).catch(() => {});
+      // Set up API interceptor BEFORE clicking into conversation
+      let convApiData: any = null;
+      const convApiHandler = async (res: import("puppeteer").HTTPResponse) => {
+        try {
+          const url = res.url();
+          if (
+            url.includes("DirectMessageConversation") ||
+            url.includes("conversation_timeline") ||
+            url.includes("DmConversationByConversationId") ||
+            url.includes("dm_conversation")
+          ) {
+            const json = await res.json().catch(() => null);
+            if (json) convApiData = json;
+          }
+        } catch {}
+      };
+      page.on("response", convApiHandler);
+
+      addLog(`Opening conversation with @${conv.username}...`, "info");
+
+      // Use page.click() with the selector string — triggers React router properly
+      const convLinkSel = `a[href*="${conv.conversationId}"]`;
+      const linkExists = await page.$(convLinkSel);
+
+      if (linkExists) {
+        await page.click(convLinkSel);
+      } else {
+        // Fallback: direct navigation
+        await page.goto(`https://x.com${conv.href}`, { waitUntil: "domcontentloaded", timeout: 20000 });
+      }
+
+      // Wait for the DM message list — confirmed testid from X's current DOM
+      const panelReady = await page.waitForSelector(
+        '[data-testid="dm-message-list"], [data-testid="dm-conversation-panel"]',
+        { timeout: 12000 }
+      ).then(() => true).catch(() => false);
+
+      page.off("response", convApiHandler);
+
+      if (!panelReady) {
+        const debugIds = await page.evaluate(() =>
+          [...new Set(Array.from(document.querySelectorAll("[data-testid]"))
+            .map(el => el.getAttribute("data-testid")))].slice(0, 60).join(", ")
+        ).catch(() => "");
+        addLog(`@${conv.username}: panel not ready. testids: ${debugIds}`, "warning");
+        await page.screenshot({ path: "./xavier_conv_debug.png" }).catch(() => {});
+        await page.goto("https://x.com/i/chat", { waitUntil: "domcontentloaded", timeout: 15000 });
+        await randDelay(1500, 2000);
+        continue;
+      }
+
+      addLog(`Conversation panel loaded`, "info");
       await randDelay(800, 1500);
 
+      // Get real username from the conversation header (confirmed testid: dm-conversation-username)
+      const headerUsername = await page.evaluate(() => {
+        const el = document.querySelector('[data-testid="dm-conversation-username"]');
+        return el?.textContent?.trim() ?? "";
+      }).catch(() => "");
+      if (headerUsername) conv.username = headerUsername;
+
       // Extract messages
-      const messages = await page.evaluate(() => {
-        const vw = window.innerWidth || 1280;
+      let finalMessages: { text: string; isOutgoing: boolean; timestamp: string }[] = [];
 
-        // Try multiple selectors for message entries
-        let msgEls: Element[] = Array.from(document.querySelectorAll('[data-testid="messageEntry"]'));
-        if (msgEls.length === 0)
-          msgEls = Array.from(document.querySelectorAll('[data-testid="DM_Message_container"]'));
-        if (msgEls.length === 0) {
-          // Generic: cells that contain text content and a time element
-          msgEls = Array.from(document.querySelectorAll('[data-testid="cellInnerDiv"]'))
-            .filter(el => !!el.querySelector("time") && !!(el as HTMLElement).innerText?.trim());
+      // ── API-First Extraction ───────────────────────────────────────────────
+      if (convApiData) {
+        try {
+          finalMessages = parseXMessagesFromApiResponse(convApiData, myUserId);
+          if (finalMessages.length > 0) {
+            addLog(`Captured ${finalMessages.length} messages via Network API`, "success");
+          }
+        } catch {}
+      }
+
+      // ── DOM Fallback using X's confirmed testid pattern ───────────────────
+      if (finalMessages.length === 0) {
+        finalMessages = await page.evaluate(() => {
+          // X's confirmed testid: message-text-{uuid}
+          let msgTextEls = Array.from(document.querySelectorAll('[data-testid^="message-text-"]')) as HTMLElement[];
+          if (msgTextEls.length === 0) {
+            msgTextEls = Array.from(document.querySelectorAll('[data-testid="messageEntry"], [data-testid="DM_Message_container"]')) as HTMLElement[];
+          }
+          if (msgTextEls.length === 0) return [];
+
+          // Use the message list panel as reference for relative positioning.
+          // The message-{uuid} wrapper is full-width (flex row), so we MUST
+          // measure position relative to the panel, not the viewport.
+          const listEl = (
+            document.querySelector('[data-testid="dm-message-list"]') ??
+            document.querySelector('[data-testid="dm-message-list-container"]') ??
+            document.querySelector('[data-testid="dm-conversation-content"]')
+          ) as HTMLElement | null;
+          const listRect = listEl?.getBoundingClientRect();
+          const panelLeft = listRect?.left ?? 0;
+          const panelWidth = listRect?.width ?? window.innerWidth;
+
+          return msgTextEls.slice(-15).flatMap((el: HTMLElement) => {
+            const text = el.innerText?.trim() ?? "";
+            if (!text) return [];
+
+            // Use the text element's own rect — it sits inside the bubble which is
+            // left- or right-aligned within the full-width message-{uuid} wrapper.
+            const rect = el.getBoundingClientRect();
+            const relCenter = panelWidth > 0
+              ? (rect.left + rect.width / 2 - panelLeft) / panelWidth
+              : 0.5;
+            // Outgoing messages sit in the right half of the conversation panel
+            const isOutgoing = relCenter > 0.55;
+
+            console.log(`XAVIER MSG: "${text.substring(0, 30)}" relCenter=${relCenter.toFixed(2)} outgoing=${isOutgoing}`);
+
+            const timeEl = (el.parentElement?.querySelector("time") ?? el.querySelector("time")) as HTMLTimeElement | null;
+            const timestamp = timeEl?.getAttribute("datetime") ?? new Date().toISOString();
+            return [{ text, isOutgoing, timestamp }];
+          });
+        }) as { text: string; isOutgoing: boolean; timestamp: string }[];
+        if (finalMessages.length > 0) {
+          addLog(`Extracted ${finalMessages.length} messages via DOM`, "info");
         }
+      }
 
-        return msgEls.slice(-10).map((el: any) => {
-          // Text: prefer tweetText, then dir="auto", then any lang-attributed span
-          const textEl: HTMLElement | null =
-            el.querySelector('[data-testid="tweetText"]') ||
-            el.querySelector('[dir="auto"]') ||
-            el.querySelector("span[lang]");
-          const text = textEl?.innerText?.trim() ?? el.innerText?.trim() ?? "";
-
-          // Outgoing detection: outgoing messages sit on the RIGHT side of the viewport.
-          // We check the horizontal center of the element against the viewport midpoint.
-          const rect = el.getBoundingClientRect();
-          const centerX = rect.left + rect.width / 2;
-          const isOutgoing = centerX > vw * 0.55;
-
-          const timeEl: HTMLElement | null = el.querySelector("time");
-          const timestamp = timeEl?.getAttribute("datetime") ?? new Date().toISOString();
-
-          return { text, isOutgoing, timestamp };
-        }).filter((m: any) => m.text.length > 0);
-      });
-
-      if (!messages.length) continue;
+      const messages = finalMessages;
+      if (!messages.length) {
+        addLog(`@${conv.username}: no messages found — skipping`, "warning");
+        continue;
+      }
 
       const lastMsg = messages[messages.length - 1];
 
       // Skip if last message is ours (outgoing)
       if (lastMsg.isOutgoing) {
-        addLog(`@${conv.username}: last msg is ours — skipping`, "info");
+        addLog(`@${conv.username}: last msg is outgoing — skipping`, "info");
         continue;
       }
 
-      // Skip if already replied (last logged message matches)
+      // Skip if we've already replied to this exact last message
       if (existing?.messages?.length) {
-        const lastLogged = existing.messages[existing.messages.length - 1];
-        if (
-          lastLogged.role === "xavier" &&
-          new Date(lastMsg.timestamp) <=
-            new Date(lastLogged.timestamp)
-        ) {
-          addLog(`@${conv.username}: no new messages — skipping`, "info");
+        const lastXavierMsg = [...existing.messages].reverse().find((m: any) => m.role === "xavier");
+        if (lastXavierMsg && new Date(lastMsg.timestamp) <= new Date(lastXavierMsg.timestamp)) {
+          addLog(`@${conv.username}: no new messages since last reply — skipping`, "info");
           continue;
         }
       }
@@ -350,40 +607,48 @@ async function inboxTick() {
         const replyText = aiRes.choices[0]?.message?.content?.trim() ?? "";
         if (!replyText) continue;
 
-        // Type and send the reply
-        const inputEl = await page.$(
-          '[data-testid="dmComposerTextInput"]'
-        );
+        // Click the composer container to focus it, then find the contenteditable inside
+        await page.click('[data-testid="dm-composer-container"]').catch(() => {});
+        await randDelay(400, 700);
+
+        // Find the contenteditable text input inside the composer
+        const INPUT_SELECTORS = [
+          '[data-testid="dm-composer-container"] [contenteditable="true"]',
+          '[data-testid="dm-composer-container"] [role="textbox"]',
+          '[data-testid="dm-composer-container"] textarea',
+          '[contenteditable="true"]',
+        ];
+        let inputEl = null;
+        for (const sel of INPUT_SELECTORS) {
+          inputEl = await page.$(sel);
+          if (inputEl) break;
+        }
         if (!inputEl) {
           addLog(`@${conv.username}: DM input not found`, "error");
           continue;
         }
 
         await inputEl.click();
-        await randDelay(400, 800);
+        await randDelay(300, 600);
 
+        // Type the reply character by character (human-like)
         for (const char of replyText) {
-          await page.keyboard.type(char, { delay: Math.random() * 50 + 20 });
+          await page.keyboard.type(char, { delay: Math.random() * 40 + 15 });
         }
+        await randDelay(500, 1000);
+
+        // Trigger React input events so send button activates
+        await page.evaluate(() => {
+          const el = document.querySelector('[data-testid="dm-composer-container"] [contenteditable="true"]') as HTMLElement | null
+            ?? document.querySelector('[contenteditable="true"]') as HTMLElement | null;
+          if (!el) return;
+          el.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true }));
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+        });
         await randDelay(600, 1200);
 
-        // ── KEY FIX: Trigger React state updates ─────────────────────────
-        await page.evaluate(() => {
-          const el = document.querySelector('[data-testid="dmComposerTextInput"]') as HTMLElement | null;
-          if (!el) return;
-          el.dispatchEvent(new Event("input", { bubbles: true }));
-          el.dispatchEvent(new Event("change", { bubbles: true }));
-          el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: " " }));
-        });
-        await randDelay(800, 1500);
-
-        // Send via Enter key or send button
-        const sendBtn = await page.$('[data-testid="dmComposerSendButton"]');
-        if (sendBtn) {
-          await sendBtn.click();
-        } else {
-          await page.keyboard.press("Enter");
-        }
+        // Send — no send button testid found in X's current DOM, use Enter key
+        await page.keyboard.press("Enter");
 
         await randDelay(1000, 2000);
 
@@ -441,8 +706,10 @@ async function inboxTick() {
         repliedCount++;
         g.xavier_inbox_consecutiveErrors = 0;
 
-        // Human-like delay between conversations
-        await randDelay(3000, 6000);
+        // Human-like delay, then return to inbox for next conversation
+        await randDelay(2000, 3500);
+        await page.goto("https://x.com/i/chat", { waitUntil: "domcontentloaded", timeout: 15000 });
+        await randDelay(1500, 2500);
       } catch (replyErr: any) {
         addLog(`Reply error for @${conv.username}: ${replyErr.message}`, "error");
         g.xavier_inbox_consecutiveErrors++;
@@ -481,7 +748,7 @@ function startInbox() {
     inboxTick().catch((e) =>
       addLog(`Uncaught inbox error: ${e.message}`, "error")
     );
-  }, 120_000); // every 2 minutes
+  }, 5 * 60_000); // every 5 minutes
   inboxTick().catch((e) =>
     addLog(`Initial inbox tick error: ${e.message}`, "error")
   );

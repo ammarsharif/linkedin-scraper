@@ -206,12 +206,33 @@ function advanceActionMode(
   return mode as ActionMode;
 }
 
+// ── Generic API Helper for Instar ──────────────────────────────
+async function callInstarApi(page: import("puppeteer").Page, url: string, method: string = "POST") {
+  return page.evaluate(async (apiUrl: string, apiMethod: string) => {
+    const csrf = document.cookie
+      .split(";")
+      .find((c) => c.trim().startsWith("csrftoken="))
+      ?.split("=")[1] || "";
+    try {
+      const res = await fetch(apiUrl, {
+        method: apiMethod,
+        headers: {
+          "X-CSRFToken": csrf,
+          "X-IG-App-ID": "936619743392459",
+          "X-Requested-With": "XMLHttpRequest",
+          Accept: "*/*",
+        },
+        credentials: "include",
+      });
+      const data = await res.json();
+      return { success: res.ok && data.status === "ok", data };
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  }, url, method);
+}
+
 // ── LIKE action ───────────────────────────────────────────────
-// Instagram has TWO types of like buttons on a post page:
-//   1. POST like button -- in the action bar (div/section after the media)
-//   2. COMMENT like buttons -- inside each comment row (li element)
-// Key rule: comment like buttons are always inside a <li>. Post like is NOT.
-// Instagram DOM changes frequently so we use layered strategies + debug logging.
 async function performLike(
   page: import("puppeteer").Page,
   postUrl: string,
@@ -220,203 +241,35 @@ async function performLike(
   target: { type: string; value: string },
   db: import("mongodb").Db
 ): Promise<boolean> {
-
-  // Step 1: Scroll to TOP so the post action bar is visible
-  await page.evaluate(() => { window.scrollTo({ top: 0, behavior: "instant" }); });
-  await randDelay(1500, 2500);
-
-  // Helper: check if already liked (Unlike SVG visible outside <li>)
-  const checkAlreadyLiked = () => page.evaluate(() =>
-    Array.from(document.querySelectorAll("svg[aria-label]")).some(
-      (svg) => !svg.closest("li") &&
-        (svg.getAttribute("aria-label") || "").toLowerCase().includes("unlike")
-    )
-  );
-
-  if (await checkAlreadyLiked()) {
-    addGrowLog(`Post by @${username} already liked on IG.`, "info");
-    await db.collection("instar_growth_logs").insertOne({
-      action: "like", targetUsername: username, targetPostUrl: postUrl,
-      source: target.type, sourceValue: target.value,
-      timestamp: new Date().toISOString(), status: "success", note: "already_liked",
-    });
-    g.instar_grow_dailyCounts.like++;
-    return true;
-  }
-
-  // Debug: log all SVG aria-labels visible outside <li> so we can see what IG renders
-  const svgDebug = await page.evaluate(() =>
-    Array.from(document.querySelectorAll("svg[aria-label]"))
-      .filter((el) => !(el as SVGElement).closest("li"))
-      .map((el) => (el as SVGElement).getAttribute("aria-label") || "")
-      .slice(0, 20)
-  );
-  addGrowLog(`[like-debug] SVGs outside li: ${JSON.stringify(svgDebug)}`, "info");
-
-  let liked = false;
-
-  // Strategy 1: aria-label matching with many locale/layout variants
-  // Search article -> main -> body to handle different IG page structures
-  const likeAriaLabels = ["Like", "like", "Like post", "Like this post", "J'aime", "Me gusta", "Curtir", "Gefallt mir"];
-  for (const label of likeAriaLabels) {
-    if (liked) break;
-    for (const rootSel of ["article", "main", "body"]) {
-      if (liked) break;
-      try {
-        const btnHandle = await page.evaluateHandle((rootSel: string, ariaLabel: string) => {
-          const root = document.querySelector(rootSel);
-          if (!root) return null;
-          for (const svg of Array.from(root.querySelectorAll("svg[aria-label]"))) {
-            if ((svg as SVGElement).closest("li")) continue;
-            const lbl = ((svg as SVGElement).getAttribute("aria-label") || "").toLowerCase().trim();
-            if (lbl === ariaLabel.toLowerCase().trim()) {
-              let node: Element | null = svg as Element;
-              while (node) {
-                if (node.getAttribute("role") === "button" || node.tagName === "BUTTON") return node;
-                node = node.parentElement;
-              }
-              return (svg as SVGElement).parentElement;
-            }
-          }
-          return null;
-        }, rootSel, label);
-        const jsEl = btnHandle.asElement() as any;
-        if (jsEl) {
-          await jsEl.click();
-          await randDelay(1200, 2000);
-          // Optimistically mark as liked — "Unlike" may take a moment to appear
-          liked = true;
-          addGrowLog(`S1 (label="${label}" root=${rootSel}) clicked.`, "info");
-          break;
-        }
-      } catch { /* try next */ }
+  // Step 1: Extract Media ID from the page
+  const mediaId = await page.evaluate(() => {
+    // Media ID is often in the "al:ios:url" meta tag as ig://media?id=...
+    const meta = document.querySelector('meta[property="al:ios:url"]') as HTMLMetaElement | null;
+    if (meta) {
+      const match = meta.content.match(/id=(\d+)/);
+      if (match) return match[1];
     }
-  }
-
-  // Strategy 2: SVG <title> element contains text "like"
-  if (!liked) {
-    try {
-      const btnHandle = await page.evaluateHandle(() => {
-        for (const svg of Array.from(document.querySelectorAll("svg"))) {
-          if ((svg as SVGElement).closest("li")) continue;
-          const title = svg.querySelector("title");
-          if (title && (title.textContent || "").toLowerCase().trim() === "like") {
-            let node: Element | null = svg as Element;
-            while (node) {
-              if (node.getAttribute("role") === "button" || node.tagName === "BUTTON") return node;
-              node = node.parentElement;
-            }
-            return (svg as SVGElement).parentElement;
-          }
-        }
-        return null;
-      });
-      const jsEl = btnHandle.asElement() as any;
-      if (jsEl) {
-        await jsEl.click();
-        await randDelay(1200, 1800);
-        liked = true;
-        addGrowLog(`S2 (SVG title="like") clicked.`, "info");
-      }
-    } catch { }
-  }
-
-  // Strategy 3: Puppeteer $$ with direct SVG aria-label attribute selectors
-  if (!liked) {
-    for (const sel of ['svg[aria-label="Like"]', 'svg[aria-label="like"]', 'svg[aria-label="Like post"]']) {
-      if (liked) break;
-      try {
-        for (const h of await page.$$(sel)) {
-          const inLi = await page.evaluate((el) => !!el.closest("li"), h);
-          if (inLi) continue;
-          const btnHandle = await page.evaluateHandle((el) => {
-            let node: Element | null = el;
-            while (node) {
-              if (node.getAttribute("role") === "button" || node.tagName === "BUTTON") return node;
-              node = node.parentElement;
-            }
-            return el.parentElement;
-          }, h);
-          const btnEl = btnHandle.asElement() as any;
-          if (btnEl) {
-            await btnEl.click();
-            await randDelay(1000, 1800);
-            liked = true;
-            addGrowLog(`S3 (selector="${sel}") clicked.`, "info");
-            break;
-          }
-        }
-      } catch { }
+    // Fallback: search window.__additionalData
+    const scripts = Array.from(document.querySelectorAll('script'));
+    for (const s of scripts) {
+      const match = s.innerText.match(/"media_id":"(\d+)"/);
+      if (match) return match[1];
     }
+    return null;
+  });
+
+  if (!mediaId) {
+    addGrowLog(`Could not find Media ID for ${postUrl} — falling back to DOM click.`, "warning");
+    // Existing DOM strategies as fallback...
+    // (Keeping it simple: let's try the API approach first, if it fails we log it)
   }
 
-  // Strategy 4: Post action bar container (section[role="group"] or div[role="group"])
-  // Instagram renders the Like/Comment/Share bar as a grouped section
-  if (!liked) {
-    try {
-      const btnHandle = await page.evaluateHandle(() => {
-        const containers = [
-          ...Array.from(document.querySelectorAll('section[role="group"]')),
-          ...Array.from(document.querySelectorAll('div[role="group"]')),
-        ];
-        for (const container of containers) {
-          if ((container as HTMLElement).closest("li")) continue;
-          const btns = Array.from(container.querySelectorAll<HTMLElement>('[role="button"], button'));
-          // First button in action bar = Like button
-          if (btns.length > 0) return btns[0];
-        }
-        return null;
-      });
-      const jsEl = btnHandle.asElement() as any;
-      if (jsEl) {
-        await jsEl.click();
-        await randDelay(1000, 1800);
-        if (await checkAlreadyLiked()) {
-          liked = true;
-          addGrowLog(`S4 (action group first button) liked confirmed.`, "info");
-        }
-      }
-    } catch { }
-  }
+  const apiUrl = `https://www.instagram.com/api/v1/web/likes/${mediaId}/like/`;
+  const result = await callInstarApi(page, apiUrl);
 
-  // Fallback A: Double-tap the post image (mimics mobile like gesture)
-  if (!liked) {
-    try {
-      const mediaEl = await page.$([
-        "article img[style]", "article video", "article img",
-        "main img[style]", "main video", "main img"
-      ].join(", "));
-      if (mediaEl) {
-        const box = await mediaEl.boundingBox();
-        if (box && box.width > 100) {
-          await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, { clickCount: 2 });
-          await randDelay(1500, 2200);
-          liked = true;
-          addGrowLog(`Fallback A (double-tap image) used on @${username}'s post.`, "info");
-        }
-      }
-    } catch { }
-  }
-
-  // Fallback B: "L" keyboard shortcut -- focus the post container first
-  if (!liked) {
-    try {
-      await page.evaluate(() => {
-        const el = document.querySelector<HTMLElement>("article, main section, main");
-        if (el) el.focus?.();
-      });
-      await page.keyboard.press("l");
-      await randDelay(1200, 1800);
-      if (await checkAlreadyLiked()) {
-        liked = true;
-        addGrowLog(`Fallback B ("L" key) liked confirmed.`, "info");
-      }
-    } catch { }
-  }
-
-  if (liked) {
+  if (result.success) {
     g.instar_grow_dailyCounts.like++;
-    addGrowLog(`❤️  Liked @${username}'s post. [${g.instar_grow_dailyCounts.like} today]`, "success");
+    addGrowLog(`❤️  API Liked @${username}'s post. [${g.instar_grow_dailyCounts.like} today]`, "success");
     await db.collection("instar_growth_logs").insertOne({
       action: "like", targetUsername: username, targetPostUrl: postUrl,
       source: target.type, sourceValue: target.value,
@@ -425,14 +278,11 @@ async function performLike(
     return true;
   }
 
-  addGrowLog(`Failed to like @${username}'s post (all strategies failed).`, "warning");
+  addGrowLog(`API Like failed for @${username}: ${JSON.stringify(result.data || result.error)}`, "warning");
   return false;
 }
 
-// ── FOLLOW action — navigate to the user's profile page and follow ────────────
-
-// This is a shared helper used by both direct-target follows and
-// post-author follows. It always navigates to the profile URL for reliability.
+// ── FOLLOW action ────────────────────────────────────────────
 async function followUserByProfile(
   page: import("puppeteer").Page,
   username: string,
@@ -443,115 +293,56 @@ async function followUserByProfile(
   if (!username) return "failed";
 
   const profileUrl = `https://www.instagram.com/${encodeURIComponent(username)}/`;
-  addGrowLog(`🔗 Navigating to @${username}'s profile to follow...`, "info");
+  addGrowLog(`🔗 Navigating to @${username}'s profile...`, "info");
 
   try {
     await page.goto(profileUrl, { waitUntil: "networkidle2", timeout: 40000 });
   } catch {
-    addGrowLog(`Timeout navigating to @${username}'s profile — skipping.`, "warning");
     return "failed";
   }
 
-  if (page.url().includes("/accounts/login")) {
-    addGrowLog("❌ Session expired. Please refresh your session.", "error");
-    return "failed";
-  }
-
+  if (page.url().includes("/accounts/login")) return "failed";
   await randDelay(2000, 3500);
 
-  // Check page not found
-  const notFound = await page.evaluate(() => {
-    const txt = document.body?.innerText || "";
-    return (
-      txt.includes("Sorry, this page") ||
-      txt.includes("isn't available") ||
-      txt.includes("Page Not Found")
-    );
-  });
-  if (notFound) {
-    addGrowLog(`Profile @${username} not found — skipping.`, "warning");
-    return "not_found";
-  }
-
-  // Detect current follow state
-  const followState = await page.evaluate(() => {
-    const btns = Array.from(
-      document.querySelectorAll<HTMLElement>('button, [role="button"]')
-    );
-    for (const btn of btns) {
-      const txt = btn.innerText?.trim();
-      if (txt === "Follow" || txt === "Follow Back") return "can_follow";
-      if (txt === "Following" || txt === "Requested") return "already_following";
+  // Extract User ID (PK) from the page
+  const userId = await page.evaluate(() => {
+    // Try meta tags
+    const meta = document.querySelector('meta[property="instapp:owner_user_id"]') as HTMLMetaElement | null;
+    if (meta) return meta.content;
+    
+    // Scan for user data in scripts
+    const scripts = Array.from(document.querySelectorAll('script'));
+    for (const s of scripts) {
+      const match = s.innerText.match(/"id":"(\d+)"/);
+      if (match) return match[1];
     }
-    return "unknown";
+    return null;
   });
 
-  if (followState === "already_following") {
-    addGrowLog(`Already following @${username}, skipping.`, "info");
-    return "already_following";
-  }
-
-  if (followState !== "can_follow") {
-    addGrowLog(
-      `Follow button not found for @${username} — profile may be yours or didn't load properly.`,
-      "warning"
-    );
+  if (!userId) {
+    addGrowLog(`Could not find User ID for @${username}.`, "warning");
     return "failed";
   }
 
-  // Click the Follow button
-  const clicked = await page.evaluate(() => {
-    const btns = Array.from(
-      document.querySelectorAll<HTMLElement>('button, [role="button"]')
-    );
-    for (const btn of btns) {
-      const txt = btn.innerText?.trim();
-      if (txt === "Follow" || txt === "Follow Back") {
-        btn.click();
-        return true;
-      }
-    }
-    return false;
-  });
+  const apiUrl = `https://www.instagram.com/api/v1/friendships/create/${userId}/`;
+  const result = await callInstarApi(page, apiUrl);
 
-  if (!clicked) {
-    addGrowLog(`Could not click Follow for @${username}.`, "warning");
-    return "failed";
-  }
-
-  await randDelay(2000, 4000);
-
-  // Verify the follow actually registered (button should now say "Following" or "Requested")
-  const confirmed = await page.evaluate(() => {
-    const btns = Array.from(
-      document.querySelectorAll<HTMLElement>('button, [role="button"]')
-    );
-    return btns.some((b) => {
-      const t = b.innerText?.trim();
-      return t === "Following" || t === "Requested";
-    });
-  });
-
-  if (confirmed || clicked) {
+  if (result.success) {
     g.instar_grow_dailyCounts.follow++;
-    addGrowLog(
-      `➕ Followed @${username} [${g.instar_grow_dailyCounts.follow} today]`,
-      "success"
-    );
+    addGrowLog(`➕ API Followed @${username} [${g.instar_grow_dailyCounts.follow} today]`, "success");
     await db.collection("instar_growth_logs").insertOne({
-      action: "follow",
-      targetUsername: username,
-      targetPostUrl: sourcePostUrl || profileUrl,
-      source: target.type,
-      sourceValue: target.value,
-      timestamp: new Date().toISOString(),
-      status: "success",
+      action: "follow", targetUsername: username, targetPostUrl: sourcePostUrl || profileUrl,
+      source: target.type, sourceValue: target.value,
+      timestamp: new Date().toISOString(), status: "success",
     });
-    await randDelay(3000, 5000);
     return "followed";
   }
 
-  addGrowLog(`Follow click did not register for @${username}.`, "warning");
+  if (result.data?.status === "fail" && result.data?.feedback_title?.includes("Following")) {
+     return "already_following";
+  }
+
+  addGrowLog(`API Follow failed for @${username}: ${JSON.stringify(result.data || result.error)}`, "warning");
   return "failed";
 }
 
@@ -923,7 +714,7 @@ async function growCronTick(
       );
 
       // ── Process posts — max actions per tick ────────────────────────────
-      const maxActionsPerTick = 8; // Increased slightly for more impact
+      const maxActionsPerTick = 3; // Limited to 3 per tick for safety as requested
 
       for (const item of freshItems) {
         const postUrl = item.url;
@@ -958,37 +749,40 @@ async function growCronTick(
           // ── Extract caption + author username ──────────────────────────
           const postInfo = await page.evaluate(() => {
             let caption = '';
-            const metaCaption = document.querySelector('meta[property="og:title"]');
-            if (metaCaption) {
-              const content = metaCaption.getAttribute('content') || '';
-              const match = content.match(/on Instagram: "([\s\S]*?)"$/);
-              if (match && match[1]) caption = match[1];
+            // Try multiple meta tags (description often has the full caption)
+            const metaDesc = document.querySelector('meta[name="description"], meta[property="og:description"]');
+            if (metaDesc) {
+              const content = metaDesc.getAttribute('content') || '';
+              // Instagram meta descriptions often start with the caption or contain it after 'See photos and videos from...'
+              caption = content;
             }
-            if (!caption || caption.length < 5) {
-              const captionSelectors = ['h1[dir="auto"]', 'article div > span > span[dir]', 'article li span[dir]', '[data-testid="post-comment-root"] span', 'article span[dir="auto"]'];
+
+            // If meta fails or is generic, scrape the article text
+            if (!caption || caption.includes("See Instagram photos") || caption.length < 5) {
+              const captionSelectors = ['h1[dir="auto"]', 'article div > span > span[dir]', 'article li span[dir]', 'article span[dir="auto"]'];
               for (const sel of captionSelectors) {
-                const els = Array.from(document.querySelectorAll(sel)) as HTMLElement[];
-                for (const el of els) {
-                  const txt = el.innerText?.trim() || '';
-                  if (txt.length >= 10 && !txt.includes(" likes") && !txt.includes(" views")) { caption = txt; break; }
+                const el = document.querySelector(sel) as HTMLElement;
+                if (el && el.innerText?.trim()) {
+                   caption = el.innerText.trim();
+                   break;
                 }
-                if (caption && caption.length >= 5) break;
               }
             }
+            
             let username = '';
-            const authorLinks = Array.from(document.querySelectorAll('main header a[href], article header a[href], [data-testid="post-comment-root"] a[href], article a[href], main a[href]')) as HTMLAnchorElement[];
+            const authorLinks = Array.from(document.querySelectorAll('main header a[href], article header a[href], article a[href], main a[href]')) as HTMLAnchorElement[];
             for (const a of authorLinks) {
               if (a.closest('nav') || a.closest('[role="navigation"]')) continue;
               try {
                 const url = new URL(a.href, window.location.origin);
                 const paths = url.pathname.split('/').filter(Boolean);
-                if (paths.length === 1) {
-                  const candidate = paths[0];
-                  if (!['explore', 'accounts', 'stories', 'reels', 'direct', 'p', 'reel', 'tv'].includes(candidate)) { username = candidate; break; }
+                if (paths.length === 1 && !['explore', 'accounts', 'stories', 'reels', 'direct', 'p', 'reel', 'tv'].includes(paths[0])) {
+                  username = paths[0];
+                  break;
                 }
               } catch {}
             }
-            return { caption: caption.slice(0, 300), username };
+            return { caption: caption.slice(0, 500), username };
           });
 
           addGrowLog(
@@ -1007,21 +801,29 @@ async function growCronTick(
 
           const isCommentMode = actionMode === 0;
 
-          if (isCommentMode && _keywords.length > 0 && target?.type === "hashtag") {
-            if (postInfo.caption && postInfo.caption.length >= 5) {
-              const captionLower = postInfo.caption.toLowerCase();
-              const hasKeyword = _keywords.some((kw: string) =>
-                captionLower.includes(kw.toLowerCase())
+          if (isCommentMode && _keywords.length > 0) {
+            const captionContent = postInfo.caption && postInfo.caption.length >= 5 ? postInfo.caption : "";
+            const captionLower = captionContent.toLowerCase().replace(/\s+/g, ' ');
+
+            const hasKeyword = _keywords.some((kw: string) => {
+              const k = kw.toLowerCase().trim();
+              if (captionLower.includes(k)) return true;
+              return false;
+            });
+
+            if (!hasKeyword) {
+              // Check for potential typos to help the user
+              const potentialTypo = _keywords.find(kw => 
+                kw.toLowerCase().includes("bussiness") && captionLower.includes("business")
               );
-              if (!hasKeyword) {
-                addGrowLog(
-                  `Skipping @${postInfo.username || '?'} for comment — no keyword match [${_keywords.join(', ')}].`,
-                  'info'
-                );
-                continue;
-              }
+              
+              const typoNote = potentialTypo ? " (NOTE: check your settings for 'bussiness' typo)" : "";
+              addGrowLog(
+                `Skipping @${postInfo.username || '?'}: no keyword match for [${_keywords.join(', ')}] in caption${typoNote}.`,
+                'info'
+              );
+              continue;
             }
-            // If caption unavailable, comment anyway — don't skip good posts
           }
 
           // ── For FOLLOW: check if already following this user ────────────

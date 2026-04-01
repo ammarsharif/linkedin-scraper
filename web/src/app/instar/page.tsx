@@ -1073,7 +1073,7 @@ export default function InstarPage() {
                   <span style={{ color: "#60a5fa" }}>② Follow</span>
                   {" → "}
                   <span style={{ color: "#ef4444" }}>③ Like</span>
-                  {" → repeat · 20 min interval · max 5 actions/tick"}
+                  {" → repeat · 20 min interval · max 3 actions/tick"}
                 </p>
               </div>
 
