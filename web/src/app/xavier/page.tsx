@@ -1465,65 +1465,83 @@ export default function XavierPage() {
 
             {/* Status card */}
             <div
-              className="p-6 rounded-2xl border"
+              className="p-6 rounded-2xl border mb-6"
               style={{
-                background: dmRunning ? "rgba(16,185,129,0.05)" : "rgba(0,0,0,0.3)",
-                borderColor: dmRunning ? "rgba(16,185,129,0.2)" : "rgba(255,255,255,0.06)",
+                background: "rgba(0,0,0,0.3)",
+                borderColor: dmRunning ? "rgba(29,155,240,0.2)" : "rgba(255,255,255,0.06)",
               }}
             >
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-3">
                   <div
-                    className="w-10 h-10 rounded-xl flex items-center justify-center"
-                    style={{ background: dmRunning ? "rgba(16,185,129,0.15)" : "rgba(255,255,255,0.05)" }}
+                    className="w-12 h-12 rounded-xl flex items-center justify-center"
+                    style={{ 
+                      background: dmRunning ? "rgba(29,155,240,0.12)" : "rgba(239,68,68,0.08)",
+                      border: `1px solid ${dmRunning ? "rgba(29,155,240,0.25)" : "rgba(239,68,68,0.15)"}`
+                    }}
                   >
-                    <MessageCircle size={20} style={{ color: dmRunning ? "#10b981" : "#64748b" }} />
+                    {dmRunning ? (
+                      <Zap size={22} style={{ color: X_COLOR }} />
+                    ) : (
+                      <Power size={22} className="text-red-400" />
+                    )}
                   </div>
                   <div>
-                    <div className="flex items-center gap-2">
-                      <h2 className="font-bold text-white">DM Auto-Reply</h2>
-                      <span className="text-[9px] px-1.5 py-0.5 rounded-full font-extrabold uppercase tracking-tighter" style={{ background: "rgba(34,197,94,0.15)", color: "#22c55e", border: "1px solid rgba(34,197,94,0.2)" }}>
-                        Network Intercept
-                      </span>
-                    </div>
-                    <p className="text-xs" style={{ color: "#64748b" }}>
-                      {dmRunning ? "Monitoring Twitter DMs" : "Stopped — not watching DMs"}
+                    <h3 className="text-lg font-bold text-white">
+                      {dmRunning ? "Cron Active" : "Cron Stopped"}
+                    </h3>
+                    <p className="text-sm text-gray-500">
+                      {dmRunning
+                        ? "Checking for new messages every 60 seconds."
+                        : "Start the cron to enable automatic replies."}
                     </p>
                   </div>
                 </div>
                 <button
                   onClick={toggleDmCron}
                   disabled={!twSession.exists}
-                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold transition-all cursor-pointer disabled:opacity-40"
+                  className="px-6 py-3 rounded-xl font-bold text-sm transition-all cursor-pointer disabled:opacity-50 flex items-center gap-2 border"
                   style={{
-                    background: dmRunning ? "rgba(239,68,68,0.15)" : "rgba(16,185,129,0.15)",
-                    color: dmRunning ? "#ef4444" : "#10b981",
-                    border: `1px solid ${dmRunning ? "rgba(239,68,68,0.3)" : "rgba(16,185,129,0.3)"}`,
+                    background: dmRunning ? "rgba(239,68,68,0.08)" : "rgba(29,155,240,0.1)",
+                    borderColor: dmRunning ? "rgba(239,68,68,0.2)" : "rgba(29,155,240,0.3)",
+                    color: dmRunning ? "#ef4444" : X_COLOR,
                   }}
                 >
-                  {dmRunning ? <Square size={14} /> : <Play size={14} />}
-                  {dmRunning ? "Stop" : "Start"}
+                  {dmRunning ? (
+                    <><Square size={16} /> Stop</>
+                  ) : (
+                    <><Play size={16} /> Start Cron</>
+                  )}
                 </button>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="p-3 rounded-xl" style={{ background: "rgba(255,255,255,0.03)" }}>
-                  <p className="text-xs mb-1" style={{ color: "#64748b" }}>Status</p>
-                  <p className="text-sm font-bold" style={{ color: dmRunning ? "#10b981" : "#64748b" }}>
-                    {dmRunning ? "● Running" : "○ Stopped"}
-                  </p>
+              {/* Stats Grid */}
+              <div
+                className="grid grid-cols-3 gap-3 p-4 rounded-xl"
+                style={{
+                  background: "rgba(255,255,255,0.02)",
+                  border: "1px solid rgba(255,255,255,0.04)",
+                }}
+              >
+                <div className="text-center">
+                  <p className="text-2xl font-black text-white">{convLogs.length}</p>
+                  <p className="text-xs text-gray-500 mt-1">Total Threads</p>
                 </div>
-                <div className="p-3 rounded-xl" style={{ background: "rgba(255,255,255,0.03)" }}>
-                  <p className="text-xs mb-1" style={{ color: "#64748b" }}>Last Check</p>
-                  <p className="text-sm font-bold text-white">
-                    {dmLastRun ? fmtTime(dmLastRun) : "Never"}
+                <div className="text-center">
+                  <p className="text-2xl font-black text-white">60s</p>
+                  <p className="text-xs text-gray-500 mt-1">Check Interval</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-2xl font-black text-white">
+                    {dmLastRun ? fmtTime(dmLastRun) : "—"}
                   </p>
+                  <p className="text-xs text-gray-500 mt-1">Last Check</p>
                 </div>
               </div>
 
               {!twSession.exists && (
-                <p className="text-xs mt-3" style={{ color: "#f59e0b" }}>
-                  Set up your Twitter session first.
+                <p className="text-xs mt-4 text-center" style={{ color: "#f59e0b" }}>
+                  Set up your Twitter session first to enable the auto-reply engine.
                 </p>
               )}
             </div>

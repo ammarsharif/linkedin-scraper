@@ -12,12 +12,22 @@ if (g.xavier_inbox_initialized === undefined) {
   g.xavier_inbox_interval = null;
   g.xavier_inbox_running = false;
   g.xavier_inbox_tickRunning = false;
+  g.xavier_inbox_tickStartedAt = null;  // ISO timestamp of when tick started
   g.xavier_inbox_lastRun = null;
   g.xavier_inbox_log = [];
   g.xavier_inbox_consecutiveErrors = 0;
   g.xavier_inbox_browser = null;
+  // Per-conversation in-memory lock: Set<conversationId> being processed RIGHT NOW
+  g.xavier_inbox_processingConvs = new Set<string>();
   g.xavier_inbox_dmSystemPrompt =
     "You are a professional Twitter/X assistant. Reply warmly, concisely, and professionally to Twitter DMs on behalf of the user. Keep replies under 3 sentences. Be friendly and authentic.";
+}
+
+if (!g.xavier_inbox_processingConvs) {
+  g.xavier_inbox_processingConvs = new Set<string>();
+}
+if (!g.xavier_inbox_tickStartedAt) {
+  g.xavier_inbox_tickStartedAt = null;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -147,11 +157,29 @@ function parseXMessagesFromApiResponse(json: any, myUserId: string) {
 
 // ── DM Inbox Tick ─────────────────────────────────────────────────────────────
 async function inboxTick() {
+  // ── Stale lock detection: if a tick has been running for >10 minutes,
+  //    it must have crashed without hitting the finally block — force-reset it.
   if (g.xavier_inbox_tickRunning) {
-    addLog("Inbox tick already running — skipping", "warning");
-    return;
+    const startedAt = g.xavier_inbox_tickStartedAt
+      ? new Date(g.xavier_inbox_tickStartedAt).getTime()
+      : 0;
+    const runningForMs = Date.now() - startedAt;
+    if (runningForMs < 10 * 60 * 1000) {
+      addLog(
+        `Inbox tick already running (for ${Math.round(runningForMs / 1000)}s) — skipping`,
+        "warning"
+      );
+      return;
+    }
+    // Stale lock — force reset and proceed
+    addLog(
+      `Stale tick lock detected (${Math.round(runningForMs / 1000)}s) — force resetting`,
+      "warning"
+    );
+    g.xavier_inbox_processingConvs = new Set<string>();
   }
   g.xavier_inbox_tickRunning = true;
+  g.xavier_inbox_tickStartedAt = new Date().toISOString();
   g.xavier_inbox_lastRun = new Date().toISOString();
 
   try {
@@ -421,25 +449,50 @@ async function inboxTick() {
     for (const conv of conversations) {
       if (!conv.conversationId || !conv.href) continue;
 
+      // ── Per-conversation concurrency guard (in-memory) ────────────────────
+      // If another tick is currently processing this exact conversation, skip it.
+      if (g.xavier_inbox_processingConvs.has(conv.conversationId)) {
+        addLog(
+          `@${conv.username}: already being processed by another tick — skipping`,
+          "warning"
+        );
+        continue;
+      }
+
       // Check DB for this conversation
       const existing = await db
         .collection("xavier_conversations")
         .findOne({ conversationId: conv.conversationId });
 
-      // Skip if we replied within the last 2 hours (avoid double-replies)
-      if (existing?.messages?.length) {
-        const lastXavierMsg = [...existing.messages].reverse().find((m: any) => m.role === "xavier");
-        if (lastXavierMsg) {
-          const msSinceReply = Date.now() - new Date(lastXavierMsg.timestamp).getTime();
-          if (msSinceReply < 2 * 60 * 60 * 1000) {
-            // Still skip unread: if it says unread=false AND we replied recently, skip
-            if (!conv.unread) {
-              addLog(`@${conv.username}: replied recently (${Math.round(msSinceReply / 60000)}m ago) — skipping`, "info");
-              continue;
-            }
-          }
+      // ── Per-conversation DB lock ──────────────────────────────────────────
+      // If a previous cron invocation marked this conversation as "processing"
+      // less than 5 minutes ago (i.e. it didn't finish cleanly), skip it so
+      // we don't double-reply. After 5 min we consider the lock stale.
+      if (existing?.processingLockedAt) {
+        const lockedMs = Date.now() - new Date(existing.processingLockedAt).getTime();
+        if (lockedMs < 5 * 60 * 1000) {
+          addLog(
+            `@${conv.username}: DB lock active (${Math.round(lockedMs / 1000)}s ago) — skipping`,
+            "warning"
+          );
+          continue;
         }
+        // Lock is stale — clear it and proceed
+        addLog(`@${conv.username}: Stale DB lock cleared (${Math.round(lockedMs / 1000)}s old)`, "info");
       }
+
+      // Acquire in-memory lock for this conversation
+      g.xavier_inbox_processingConvs.add(conv.conversationId);
+
+      // Acquire DB lock — any concurrent tick (different Node.js invocation) will see this
+      await db.collection("xavier_conversations").updateOne(
+        { conversationId: conv.conversationId },
+        {
+          $set: { processingLockedAt: new Date().toISOString() },
+          $setOnInsert: { createdAt: new Date().toISOString() },
+        },
+        { upsert: true }
+      );
 
       // Set up API interceptor BEFORE clicking into conversation
       let convApiData: any = null;
@@ -573,6 +626,12 @@ async function inboxTick() {
       // Skip if last message is ours (outgoing)
       if (lastMsg.isOutgoing) {
         addLog(`@${conv.username}: last msg is outgoing — skipping`, "info");
+        // Release locks immediately since we won't reply
+        g.xavier_inbox_processingConvs.delete(conv.conversationId);
+        await db.collection("xavier_conversations").updateOne(
+          { conversationId: conv.conversationId },
+          { $unset: { processingLockedAt: "" } }
+        );
         continue;
       }
 
@@ -581,14 +640,20 @@ async function inboxTick() {
         const lastXavierMsg = [...existing.messages].reverse().find((m: any) => m.role === "xavier");
         if (lastXavierMsg && new Date(lastMsg.timestamp) <= new Date(lastXavierMsg.timestamp)) {
           addLog(`@${conv.username}: no new messages since last reply — skipping`, "info");
+          // Release locks immediately since we won't reply
+          g.xavier_inbox_processingConvs.delete(conv.conversationId);
+          await db.collection("xavier_conversations").updateOne(
+            { conversationId: conv.conversationId },
+            { $unset: { processingLockedAt: "" } }
+          );
           continue;
         }
       }
 
       addLog(`Generating reply for @${conv.username}...`, "info");
 
-      // Build conversation history for AI
-      const chatHistory: { role: "user" | "assistant"; content: string }[] = messages.map((m: any) => ({
+      // Build conversation history for AI (last 10 messages for context)
+      const chatHistory: { role: "user" | "assistant"; content: string }[] = messages.slice(-10).map((m: any) => ({
         role: (m.isOutgoing ? "assistant" : "user") as "user" | "assistant",
         content: m.text as string,
       }));
@@ -697,10 +762,14 @@ async function inboxTick() {
               lastActivity: new Date().toISOString(),
               messages: newMessages,
             },
+            $unset: { processingLockedAt: "" },
             $setOnInsert: { createdAt: new Date().toISOString() },
           },
           { upsert: true }
         );
+
+        // Release in-memory lock
+        g.xavier_inbox_processingConvs.delete(conv.conversationId);
 
         addLog(`Replied to @${conv.username}: "${replyText.substring(0, 60)}..."`, "success");
         repliedCount++;
@@ -713,6 +782,12 @@ async function inboxTick() {
       } catch (replyErr: any) {
         addLog(`Reply error for @${conv.username}: ${replyErr.message}`, "error");
         g.xavier_inbox_consecutiveErrors++;
+        // Release locks on error too so next tick can retry
+        g.xavier_inbox_processingConvs.delete(conv.conversationId);
+        await db.collection("xavier_conversations").updateOne(
+          { conversationId: conv.conversationId },
+          { $unset: { processingLockedAt: "" } }
+        ).catch(() => {});
       }
     }
 
@@ -735,6 +810,9 @@ async function inboxTick() {
     }
   } finally {
     g.xavier_inbox_tickRunning = false;
+    g.xavier_inbox_tickStartedAt = null;
+    // Clear any remaining in-memory conv locks (safety net for unexpected exits)
+    g.xavier_inbox_processingConvs.clear();
   }
 }
 
@@ -775,10 +853,12 @@ export async function GET() {
   return NextResponse.json({
     running: g.xavier_inbox_running ?? false,
     tickRunning: g.xavier_inbox_tickRunning ?? false,
+    tickStartedAt: g.xavier_inbox_tickStartedAt ?? null,
     lastRun: g.xavier_inbox_lastRun ?? null,
     logs: g.xavier_inbox_log ?? [],
     consecutiveErrors: g.xavier_inbox_consecutiveErrors ?? 0,
     dmSystemPrompt: g.xavier_inbox_dmSystemPrompt,
+    processingConversations: [...(g.xavier_inbox_processingConvs ?? new Set())],
   });
 }
 

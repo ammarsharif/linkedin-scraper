@@ -54,6 +54,9 @@ const LINKEDIN_API_URL =
 // ── In-memory state for the cron ─────────────────────────────────────────────
 let cronInterval: ReturnType<typeof setInterval> | null = null;
 let cronRunning = false;
+let cronTickRunning = false;
+let cronTickStartedAt: string | null = null;
+let processingConvs: Set<string> = new Set();
 let lastCronRun: string | null = null;
 let cronLog: { time: string; message: string; type: "info" | "success" | "error" | "warning" }[] = [];
 let processedMessageIds: Set<string> = new Set();
@@ -134,6 +137,20 @@ async function cronTick(cookieString: string) {
   }
 
   if (!cronRunning) return;
+  
+  if (cronTickRunning) {
+    const startedAt = cronTickStartedAt ? new Date(cronTickStartedAt).getTime() : 0;
+    const runningForMs = Date.now() - startedAt;
+    if (runningForMs < 10 * 60 * 1000) {
+      addCronLog(`Cron tick already running (for ${Math.round(runningForMs / 1000)}s) — skipping`, "warning");
+      return;
+    }
+    addCronLog(`Stale tick lock detected (${Math.round(runningForMs / 1000)}s) — force resetting`, "warning");
+    processingConvs = new Set();
+  }
+  cronTickRunning = true;
+  cronTickStartedAt = new Date().toISOString();
+
   lastCronRun = new Date().toISOString();
   addCronLog("Checking for unread messages...", "info");
 
@@ -216,6 +233,30 @@ async function cronTick(cookieString: string) {
 
       addCronLog(`New message from ${senderName}: "${messageText.slice(0, 60)}..."`, "info");
 
+      // ── Concurrency Check ──
+      if (processingConvs.has(conversationUrn)) {
+        addCronLog(`Skipping ${senderName} — already being processed.`, "warning");
+        continue;
+      }
+      
+      const db = await getDatabase();
+      const existingConv = await db.collection("conversation_logs").findOne({ conversationUrn });
+      if (existingConv?.processingLockedAt) {
+        const lockedMs = Date.now() - new Date(existingConv.processingLockedAt).getTime();
+        if (lockedMs < 5 * 60 * 1000) {
+          addCronLog(`Skipping ${senderName} — DB lock active (${Math.round(lockedMs / 1000)}s ago)`, "warning");
+          continue;
+        }
+        addCronLog(`Cleared stale DB lock for ${senderName}`, "info");
+      }
+      
+      processingConvs.add(conversationUrn);
+      await db.collection("conversation_logs").updateOne(
+        { conversationUrn },
+        { $set: { processingLockedAt: new Date().toISOString() } },
+        { upsert: true }
+      );
+
       // ── Generate AI reply ──
       const openaiKey = process.env.OPENAI_API_KEY;
       if (!openaiKey) {
@@ -224,6 +265,19 @@ async function cronTick(cookieString: string) {
       }
 
       try {
+        // Build chatHistory from last 10 messages (API returns newest-first, reverse to chronological)
+        const chatHistory: { role: "user" | "assistant"; content: string }[] = messages
+          .slice(0, 10)
+          .reverse()
+          .filter((m: any) => (m.body?.text || "").trim())
+          .map((m: any) => {
+            const mSenderUrn = m.actor?.hostIdentityUrn || m.sender?.hostIdentityUrn || "";
+            return {
+              role: (mSenderUrn === MY_PROFILE_URN ? "assistant" : "user") as "user" | "assistant",
+              content: (m.body?.text || "").trim(),
+            };
+          });
+
         const aiRes = await fetch("https://api.openai.com/v1/chat/completions", {
           method: "POST",
           headers: {
@@ -239,10 +293,7 @@ async function cronTick(cookieString: string) {
                 content:
                   "You are a professional LinkedIn assistant for Ammar Sharif, a Full Stack Engineer at SparkoSol. Reply briefly, warmly and professionally to LinkedIn messages on his behalf. Keep replies under 3 sentences. Do not use emojis.",
               },
-              {
-                role: "user",
-                content: `Reply to this LinkedIn message from ${senderName}: ${messageText}`,
-              },
+              ...chatHistory,
             ],
           }),
         });
@@ -306,6 +357,7 @@ async function cronTick(cookieString: string) {
                   },
                 } as any,
                 $set: { senderName, senderUrn, lastActivity: new Date().toISOString() },
+                $unset: { processingLockedAt: "" },
                 $setOnInsert: { createdAt: new Date().toISOString() },
               },
               { upsert: true }
@@ -319,6 +371,9 @@ async function cronTick(cookieString: string) {
       } catch (aiErr) {
         const errMsg = aiErr instanceof Error ? aiErr.message : "Unknown AI error";
         addCronLog(`AI/Send error for ${senderName}: ${errMsg}`, "error");
+      } finally {
+        processingConvs.delete(conversationUrn);
+        await db.collection("conversation_logs").updateOne({ conversationUrn }, { $unset: { processingLockedAt: "" } }).catch(()=>{});
       }
     }
 
@@ -330,6 +385,10 @@ async function cronTick(cookieString: string) {
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unknown error";
     addCronLog(`Cron error: ${msg}`, "error");
+  } finally {
+    cronTickRunning = false;
+    cronTickStartedAt = null;
+    processingConvs.clear();
   }
 }
 
@@ -365,9 +424,11 @@ function stopCron() {
 export async function GET() {
   return NextResponse.json({
     running: cronRunning,
+    tickRunning: cronTickRunning,
     lastRun: lastCronRun,
     processedCount: processedMessageIds.size,
     logs: cronLog.slice(-30),
+    processingConversations: [...processingConvs]
   });
 }
 

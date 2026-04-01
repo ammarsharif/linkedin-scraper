@@ -20,8 +20,18 @@ if (g.instar_inbox_initialized === undefined) {
   g.instar_inbox_consecutiveErrors = 0;
   g.instar_inbox_autoAcceptRequests = true;
   g.instar_inbox_tickRunning = false;
+  g.instar_inbox_tickStartedAt = null;
+  g.instar_inbox_processingConvs = new Set();
   g.instar_inbox_systemPrompt =
     "You are a professional Instagram assistant. Reply briefly, warmly and professionally to Instagram Direct Messages on behalf of the user. Keep replies under 3 sentences. Be friendly and authentic.";
+}
+
+if (!g.instar_inbox_processingConvs) {
+  g.instar_inbox_processingConvs = new Set();
+}
+if (g.instar_inbox_tickRunning === undefined) {
+  g.instar_inbox_tickRunning = false;
+  g.instar_inbox_tickStartedAt = null;
 }
 
 // ── In-memory state ────────────────────────────────────────────────────────
@@ -275,7 +285,30 @@ async function processThread(
     return false;
   }
 
-  addCronLog(`Opening thread: ${thread.senderName}`, "info");
+  if (g.instar_inbox_processingConvs.has(thread.threadId)) {
+    addCronLog(`Already being processed by another tick: ${thread.senderName}`, "warning");
+    return false;
+  }
+
+  const existing = await db.collection("instar_conversation_logs").findOne({ threadId: thread.threadId });
+  if (existing?.processingLockedAt) {
+    const lockedMs = Date.now() - new Date(existing.processingLockedAt).getTime();
+    if (lockedMs < 5 * 60 * 1000) {
+      addCronLog(`Skipping ${thread.senderName} - DB lock active`, "warning");
+      return false;
+    }
+    addCronLog(`Cleared stale lock for ${thread.senderName}`, "info");
+  }
+
+  g.instar_inbox_processingConvs.add(thread.threadId);
+  await db.collection("instar_conversation_logs").updateOne(
+    { threadId: thread.threadId },
+    { $set: { processingLockedAt: new Date().toISOString() } },
+    { upsert: true }
+  );
+
+  try {
+    addCronLog(`Opening thread: ${thread.senderName}`, "info");
   await navigateTo(page, `https://www.instagram.com/direct/t/${thread.threadId}/`);
 
   // Resolve real sender name from page title if we only have a placeholder
@@ -313,9 +346,10 @@ async function processThread(
     }
   }
 
-  // Read full conversation history
+  // Read full conversation history (last 10 messages for context)
   const history = await fetchThreadMessages(page, thread.threadId, viewerId);
-  const prospectMsg = history.filter((m) => !m.isMine).pop()?.text || thread.lastMessage;
+  const last10 = history.slice(-10);
+  const prospectMsg = last10.filter((m) => !m.isMine).pop()?.text || thread.lastMessage;
 
   if (!prospectMsg) {
     addCronLog(`No message text found for ${thread.senderName}, skipping.`, "warning");
@@ -323,11 +357,15 @@ async function processThread(
   }
 
   addCronLog(`Generating reply to: "${prospectMsg.slice(0, 40)}..."`, "info");
+  const chatHistory = last10.map((m) => ({
+    role: (m.isMine ? "assistant" : "user") as "user" | "assistant",
+    content: m.text,
+  }));
   const aiRes = await openai.chat.completions.create({
     model: "gpt-4o-mini",
     messages: [
       { role: "system", content: g.instar_inbox_systemPrompt },
-      { role: "user", content: prospectMsg },
+      ...chatHistory,
     ],
     max_tokens: 150,
   });
@@ -360,6 +398,7 @@ async function processThread(
           lastActivity: new Date().toISOString(),
           createdAt: new Date().toISOString(),
         },
+        $unset: { processingLockedAt: "" },
         $push: { messages: { $each: [userMsg, botMsg] } }
       },
       { upsert: true }
@@ -367,8 +406,12 @@ async function processThread(
   }
 
   g.instar_inbox_processedThreadIds.add(cacheKey);
-  addCronLog(`✓ Replied to ${thread.senderName}.`, "success");
-  return true;
+  if (ok) addCronLog(`✓ Replied to ${thread.senderName}.`, "success");
+  return ok;
+  } finally {
+    g.instar_inbox_processingConvs.delete(thread.threadId);
+    await db.collection("instar_conversation_logs").updateOne({ threadId: thread.threadId }, { $unset: { processingLockedAt: "" } }).catch(()=>{});
+  }
 }
 
 // ── Main DM cron tick ──────────────────────────────────────────────────────
@@ -378,8 +421,17 @@ async function dmCronTick(
   csrftoken: string,
   mid?: string,
 ) {
-  if (!g.instar_inbox_cronRunning || g.instar_inbox_tickRunning) return;
+  if (!g.instar_inbox_cronRunning) return;
+  if (g.instar_inbox_tickRunning) {
+     const startedAt = g.instar_inbox_tickStartedAt ? new Date(g.instar_inbox_tickStartedAt).getTime() : 0;
+     const runningMs = Date.now() - startedAt;
+     if (runningMs < 10 * 60 * 1000) {
+         return;
+     }
+     g.instar_inbox_processingConvs = new Set();
+  }
   g.instar_inbox_tickRunning = true;
+  g.instar_inbox_tickStartedAt = new Date().toISOString();
   
   try {
     g.instar_inbox_lastCronRun = new Date().toISOString();
@@ -540,6 +592,8 @@ async function dmCronTick(
     }
   } finally {
     g.instar_inbox_tickRunning = false;
+    g.instar_inbox_tickStartedAt = null;
+    g.instar_inbox_processingConvs.clear();
   }
 }
 
@@ -553,6 +607,7 @@ export async function GET() {
     processedCount: g.instar_inbox_processedThreadIds.size,
     consecutiveErrors: g.instar_inbox_consecutiveErrors,
     autoAcceptRequests: g.instar_inbox_autoAcceptRequests,
+    processingConversations: [...(g.instar_inbox_processingConvs || new Set())],
   });
 }
 

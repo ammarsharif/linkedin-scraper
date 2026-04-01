@@ -10,6 +10,9 @@ if (g.felix_initialized === undefined) {
 
     g.felix_cronInterval = null;
     g.felix_cronRunning = false;
+    g.felix_cronTickRunning = false;
+    g.felix_tickStartedAt = null;
+    g.felix_processingConvs = new Set();
     g.felix_lastCronRun = null;
     g.felix_cronLog = [];
     g.felix_processedMessageIds = new Set();
@@ -18,6 +21,14 @@ if (g.felix_initialized === undefined) {
     g.felix_storedCUser = null;
     g.felix_storedXs = null;
     g.felix_storedDatr = null;
+}
+
+if (!g.felix_processingConvs) {
+  g.felix_processingConvs = new Set();
+}
+if (g.felix_cronTickRunning === undefined) {
+  g.felix_cronTickRunning = false;
+  g.felix_tickStartedAt = null;
 }
 
 
@@ -49,6 +60,20 @@ async function getBrowser(): Promise<Browser> {
 // ── Main cron tick ────────────────────────────────────────────────────────────
 async function cronTick(c_user: string, xs: string, datr: string | null) {
   if (!g.felix_cronRunning) return;
+  
+  if (g.felix_cronTickRunning) {
+    const startedAt = g.felix_tickStartedAt ? new Date(g.felix_tickStartedAt).getTime() : 0;
+    const runningForMs = Date.now() - startedAt;
+    if (runningForMs < 10 * 60 * 1000) {
+      addCronLog(`Cron tick already running (for ${Math.round(runningForMs / 1000)}s) — skipping`, "warning");
+      return;
+    }
+    addCronLog(`Stale tick lock detected (${Math.round(runningForMs / 1000)}s) — force resetting`, "warning");
+    g.felix_processingConvs = new Set();
+  }
+  g.felix_cronTickRunning = true;
+  g.felix_tickStartedAt = new Date().toISOString();
+
   g.felix_lastCronRun = new Date().toISOString();
   addCronLog("Checking for unread messages using Puppeteer Tracker...", "info");
 
@@ -181,6 +206,9 @@ async function cronTick(c_user: string, xs: string, datr: string | null) {
     // ── Process Each Thread ──
     const openaiKey = process.env.OPENAI_API_KEY;
     if (!openaiKey) { addCronLog("OPENAI_API_KEY not set.", "error"); return; }
+    
+    // Get DB once for locks
+    const db = await getDatabase();
 
     for (const thread of threadsToProcess) {
       if (!g.felix_cronRunning) {
@@ -188,30 +216,76 @@ async function cronTick(c_user: string, xs: string, datr: string | null) {
         return;
       }
       
-      addCronLog(`Opening thread: ${thread.aria.slice(0, 50)}...`, "info");
+      // Concurrency guard checks
+      if (g.felix_processingConvs.has(thread.threadId)) {
+        addCronLog(`Skipping thread ${thread.threadId} — already being processed.`, "warning");
+        continue;
+      }
+      const existingDbConv = await db.collection("felix_conversation_logs").findOne({ threadId: thread.threadId });
+      if (existingDbConv?.processingLockedAt) {
+        const lockedMs = Date.now() - new Date(existingDbConv.processingLockedAt).getTime();
+        if (lockedMs < 5 * 60 * 1000) {
+          addCronLog(`Skipping thread ${thread.threadId} — DB lock active (${Math.round(lockedMs / 1000)}s ago)`, "warning");
+          continue;
+        }
+        addCronLog(`Cleared stale DB lock for ${thread.threadId}`, "info");
+      }
+      
+      // Acquire locks
+      g.felix_processingConvs.add(thread.threadId);
+      await db.collection("felix_conversation_logs").updateOne(
+        { threadId: thread.threadId },
+        { $set: { processingLockedAt: new Date().toISOString() } },
+        { upsert: true }
+      );
+      
+      try {
+        addCronLog(`Opening thread: ${thread.aria.slice(0, 50)}...`, "info");
       
       await page.goto(thread.href, { waitUntil: "domcontentloaded", timeout: 30000 });
       // Wait for chat history to fully decrypt and render
       await new Promise(r => setTimeout(r, 4000));
 
-      // Snag the latest message (with retry loop for E2EE sync / "Loading...")
+      // Extract last 10 messages with direction detection (with retry loop for E2EE sync)
+      let conversationMessages: { text: string; isOutgoing: boolean }[] = [];
       let latestMessage = "";
       for (let attempt = 0; attempt < 3; attempt++) {
-        latestMessage = await page.evaluate(() => {
-          const rows = Array.from(document.querySelectorAll('[role="row"], div[dir="auto"]'));
-          if (rows.length === 0) return "";
-          // Take the last visible text chunk
-          for (let i = rows.length - 1; i >= 0; i--) {
-              const txt = (rows[i] as HTMLElement).innerText?.trim() || "";
-              if (txt.length > 0) return txt;
+        conversationMessages = await page.evaluate(() => {
+          const panel = (document.querySelector('[role="main"]') || document.body) as HTMLElement;
+          const panelRect = panel.getBoundingClientRect();
+          const results: { text: string; isOutgoing: boolean }[] = [];
+
+          const allRows = Array.from(document.querySelectorAll('[role="row"]')) as HTMLElement[];
+          for (const row of allRows.slice(-15)) {
+            const txt = row.innerText?.trim() ?? "";
+            if (!txt) continue;
+            const rect = row.getBoundingClientRect();
+            const relCenter = panelRect.width > 0
+              ? (rect.left + rect.width / 2 - panelRect.left) / panelRect.width
+              : 0.5;
+            results.push({ text: txt, isOutgoing: relCenter > 0.55 });
           }
-          return "";
+
+          if (results.length === 0) {
+            const divs = Array.from(document.querySelectorAll('div[dir="auto"]')) as HTMLElement[];
+            for (const d of divs.slice(-10)) {
+              const txt = d.innerText?.trim() ?? "";
+              if (txt) results.push({ text: txt, isOutgoing: false });
+            }
+          }
+
+          return results.slice(-10);
         });
+
+        // Last incoming message as the "latest" for dedup and check
+        latestMessage = conversationMessages.filter(m => !m.isOutgoing).pop()?.text
+          || conversationMessages[conversationMessages.length - 1]?.text
+          || "";
 
         if (latestMessage && latestMessage.toLowerCase() !== "loading..." && latestMessage.length > 0) {
           break;
         }
-        
+
         if (attempt < 2) {
           addCronLog(`Message is still "${latestMessage || 'empty'}" — waiting for E2EE sync...`, "info");
           await new Promise(r => setTimeout(r, 4000));
@@ -220,6 +294,9 @@ async function cronTick(c_user: string, xs: string, datr: string | null) {
 
       if (!latestMessage || latestMessage.toLowerCase() === "loading...") {
         addCronLog(`Could not read text for thread ${thread.threadId}. E2EE sync pending or message is "Loading...". Skipping.`, "warning");
+        // Release locks
+        g.felix_processingConvs.delete(thread.threadId);
+        await db.collection("felix_conversation_logs").updateOne({ threadId: thread.threadId }, { $unset: { processingLockedAt: "" } }).catch(()=>{});
         continue;
       }
 
@@ -227,12 +304,21 @@ async function cronTick(c_user: string, xs: string, datr: string | null) {
       const msgId = `${thread.threadId}_${latestMessage.slice(0, 50).replace(/\s+/g, "_")}`;
       if (g.felix_processedMessageIds.has(msgId)) {
         addCronLog(`Skipping thread ${thread.threadId} — message already processed.`, "info");
+        // Release locks
+        g.felix_processingConvs.delete(thread.threadId);
+        await db.collection("felix_conversation_logs").updateOne({ threadId: thread.threadId }, { $unset: { processingLockedAt: "" } }).catch(()=>{});
         continue;
       }
 
       addCronLog(`Message reads: "${latestMessage.slice(0, 80)}"`, "info");
 
       try {
+        // Build chatHistory from last 10 messages for AI context
+        const chatHistory = conversationMessages.map(m => ({
+          role: (m.isOutgoing ? "assistant" : "user") as "user" | "assistant",
+          content: m.text,
+        }));
+
         // Generate AI reply
         const aiRes = await fetch("https://api.openai.com/v1/chat/completions", {
           method: "POST",
@@ -241,7 +327,7 @@ async function cronTick(c_user: string, xs: string, datr: string | null) {
             model: "gpt-4o-mini", max_tokens: 150,
             messages: [
               { role: "system", content: g.felix_systemPrompt },
-              { role: "user", content: `Reply to this Facebook message: ${latestMessage}` },
+              ...chatHistory,
             ],
           }),
         });
@@ -266,7 +352,6 @@ async function cronTick(c_user: string, xs: string, datr: string | null) {
         let senderName = thread.aria.includes(',') ? thread.aria.split(',')[1].trim() : "Unknown";
         senderName = senderName.replace(/^Unread message\s*/i, '');
         try {
-          const db = await getDatabase();
           await db.collection("felix_conversation_logs").updateOne(
             { threadId: thread.threadId },
             { $push: { messages: { $each: [
@@ -274,12 +359,22 @@ async function cronTick(c_user: string, xs: string, datr: string | null) {
               { role: "felix", text: replyText, timestamp: new Date().toISOString(), source: "felix_cron" },
             ] } } as never,
             $set: { senderName: senderName, senderId: thread.threadId, lastActivity: new Date().toISOString() },
+            $unset: { processingLockedAt: "" },
             $setOnInsert: { createdAt: new Date().toISOString() } }, { upsert: true }
           );
         } catch { /* ignored */ }
+        
+        g.felix_processingConvs.delete(thread.threadId);
 
       } catch (err) {
         addCronLog(`Error responding to ${thread.threadId}: ${err instanceof Error ? err.message : String(err)}`, "error");
+        g.felix_processingConvs.delete(thread.threadId);
+        await db.collection("felix_conversation_logs").updateOne({ threadId: thread.threadId }, { $unset: { processingLockedAt: "" } }).catch(()=>{});
+      }
+      } catch (outerErr) {
+        addCronLog(`Unexpected error while processing thread ${thread.threadId}: ${outerErr instanceof Error ? outerErr.message : String(outerErr)}`, "error");
+        g.felix_processingConvs.delete(thread.threadId);
+        await db.collection("felix_conversation_logs").updateOne({ threadId: thread.threadId }, { $unset: { processingLockedAt: "" } }).catch(()=>{});
       }
     }
 
@@ -298,6 +393,10 @@ async function cronTick(c_user: string, xs: string, datr: string | null) {
       addCronLog("3 consecutive cron errors. Stopping.", "error");
       stopCron();
     }
+  } finally {
+    g.felix_cronTickRunning = false;
+    g.felix_tickStartedAt = null;
+    g.felix_processingConvs.clear();
   }
 }
 
@@ -331,7 +430,15 @@ function stopCron() {
 
 // ── GET: Cron status ──────────────────────────────────────────────────────────
 export async function GET() {
-  return NextResponse.json({ running: g.felix_cronRunning, lastRun: g.felix_lastCronRun, processedCount: g.felix_processedMessageIds.size, logs: g.felix_cronLog.slice(-30), systemPrompt: g.felix_systemPrompt });
+  return NextResponse.json({ 
+    running: g.felix_cronRunning, 
+    tickRunning: g.felix_cronTickRunning,
+    lastRun: g.felix_lastCronRun, 
+    processedCount: g.felix_processedMessageIds.size, 
+    logs: g.felix_cronLog.slice(-30), 
+    systemPrompt: g.felix_systemPrompt,
+    processingConversations: [...(g.felix_processingConvs || new Set())]
+  });
 }
 
 // ── POST: Start / Stop / Update ───────────────────────────────────────────────
