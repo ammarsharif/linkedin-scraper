@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
+import { getDatabase, KnowledgeBaseEntry } from "@/lib/mongodb";
 
 export const maxDuration = 60;
 
@@ -9,6 +10,28 @@ function getOpenAIClient(): OpenAI {
     throw new Error("OPENAI_API_KEY environment variable is not set.");
   }
   return new OpenAI({ apiKey });
+}
+
+async function getKnowledgeContext(botId: string): Promise<string> {
+  try {
+    const db = await getDatabase();
+    const entries = await db
+      .collection<KnowledgeBaseEntry>("knowledge_base")
+      .find({ $or: [{ botId }, { botId: "all" }] })
+      .sort({ updatedAt: -1 })
+      .toArray();
+
+    if (entries.length === 0) return "";
+
+    return (
+      "\n\nCOMPANY KNOWLEDGE BASE (use this as your primary source of truth):\n" +
+      entries
+        .map((e) => `[${e.type.toUpperCase()}] ${e.title}:\n${e.content}`)
+        .join("\n\n")
+    );
+  } catch {
+    return "";
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -38,10 +61,12 @@ export async function POST(req: NextRequest) {
     }
 
     const openai = getOpenAIClient();
+    const knowledgeContext = await getKnowledgeContext("cindy");
 
     const prompt = `You are Cindy, a polite, professional, and helpful Customer Service and Sales Support Bot for Devs Colab.
-You are stepping in automatically because the human representative in charge of this prospect has been unavailable to reply for 2 minutes. 
+You are stepping in automatically because the human representative in charge of this prospect has been unavailable to reply for 2 minutes.
 Your goal is to parse the prospect's message, provide quick, helpful support, handle objections or queries naturally, and gently guide the conversation forward by deeply studying their profile and the message context. Keep it seamless; do not explicitly say "I am a bot since the human is away", but be exceptionally helpful and context-aware.
+${knowledgeContext}
 
 CURRENT CONTEXT:
 Prospect Message: "${prospectMessage}"
@@ -53,6 +78,12 @@ Current Focus: ${profile.currentFocus || "N/A"}
 Areas of Expertise: ${profile.areasOfExpertise?.join(", ") || "N/A"}
 Challenges: ${profile.challengesMentioned?.join(", ") || "N/A"}
 Achievements: ${profile.achievementsMentioned?.join(", ") || "N/A"}
+
+ANTI-HALLUCINATION RULES (CRITICAL):
+- Base your reply STRICTLY on the Company Knowledge Base above and the prospect's profile.
+- If the prospect asks something NOT covered in the knowledge base and you cannot answer confidently from profile context, set "needsEscalation": true and set "reply" to: "Let me confirm this for you — I want to make sure I give you the most accurate information. Someone from our team will follow up shortly."
+- NEVER invent policies, prices, features, or commitments that are not in the knowledge base.
+- If you can answer confidently, set "needsEscalation": false.
 
 CRITICAL WRITING RULES:
 1. EMPATHY & CLARITY:
@@ -81,8 +112,11 @@ REQUIREMENTS:
 OUTPUT INSTRUCTIONS:
 Return an exact JSON object:
 {
-  "reply": "Body of the reply here..."
+  "reply": "Body of the reply here...",
+  "needsEscalation": false,
+  "escalationReason": ""
 }
+If escalation is needed, set needsEscalation to true and provide a short escalationReason (e.g. "Query about pricing not in knowledge base").
 `;
 
     const completion = await openai.chat.completions.create({
@@ -90,7 +124,7 @@ Return an exact JSON object:
       messages: [{ role: "system", content: prompt }],
       response_format: { type: "json_object" },
       temperature: 0.7,
-      max_tokens: 600,
+      max_tokens: 700,
     });
 
     const raw = completion.choices[0]?.message?.content || "{}";
@@ -99,6 +133,8 @@ Return an exact JSON object:
     return NextResponse.json({
       success: true,
       reply: data.reply,
+      needsEscalation: data.needsEscalation === true,
+      escalationReason: data.escalationReason || "",
     });
   } catch (err) {
     console.error("[cindy-generate] POST error:", err);

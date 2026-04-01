@@ -1,7 +1,51 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDatabase } from "@/lib/mongodb";
+import { getDatabase, KnowledgeBaseEntry } from "@/lib/mongodb";
 import puppeteer, { Browser, Page } from "puppeteer";
 import OpenAI from "openai";
+
+async function getKnowledgeContext(): Promise<string> {
+  try {
+    const db = await getDatabase();
+    const entries = await db
+      .collection<KnowledgeBaseEntry>("knowledge_base")
+      .find({ $or: [{ botId: "xavier" }, { botId: "all" }] })
+      .sort({ updatedAt: -1 })
+      .toArray();
+    if (entries.length === 0) return "";
+    return (
+      "\n\nCOMPANY KNOWLEDGE BASE (use this as your only source of truth):\n" +
+      entries.map((e) => `[${e.type.toUpperCase()}] ${e.title}:\n${e.content}`).join("\n\n")
+    );
+  } catch {
+    return "";
+  }
+}
+
+async function createEscalation(params: {
+  conversationId: string;
+  senderUsername: string;
+  lastMessage: string;
+  reason: string;
+}): Promise<void> {
+  try {
+    const db = await getDatabase();
+    const existing = await db
+      .collection("escalations")
+      .findOne({ conversationId: params.conversationId, status: "pending" });
+    if (existing) return;
+    await db.collection("escalations").insertOne({
+      botId: "xavier",
+      platform: "Twitter/X",
+      conversationId: params.conversationId,
+      senderName: params.senderUsername,
+      senderUsername: params.senderUsername,
+      lastMessage: params.lastMessage,
+      reason: params.reason,
+      status: "pending",
+      createdAt: new Date().toISOString(),
+    });
+  } catch { /* ignored */ }
+}
 
 export const maxDuration = 60;
 
@@ -659,17 +703,42 @@ async function inboxTick() {
       }));
 
       try {
+        const knowledgeCtx = await getKnowledgeContext();
+        const systemPromptWithContext = g.xavier_inbox_dmSystemPrompt + knowledgeCtx + `
+
+ANTI-HALLUCINATION RULES (CRITICAL):
+- Answer ONLY from the Company Knowledge Base above. If the query is not covered, reply: "Let me confirm this for you — our team will follow up shortly. ##ESCALATE## <short reason>"
+- NEVER invent prices, policies, features, or commitments not in the knowledge base.
+- If you can answer confidently, do NOT include ##ESCALATE##.`;
+
         const aiRes = await openai.chat.completions.create({
           model: "gpt-4o-mini",
           messages: [
-            { role: "system", content: g.xavier_inbox_dmSystemPrompt },
+            { role: "system", content: systemPromptWithContext },
             ...chatHistory,
           ],
-          max_tokens: 150,
+          max_tokens: 200,
           temperature: 0.75,
         });
 
-        const replyText = aiRes.choices[0]?.message?.content?.trim() ?? "";
+        let rawReply = aiRes.choices[0]?.message?.content?.trim() ?? "";
+        if (!rawReply) continue;
+
+        const needsEscalation = rawReply.includes("##ESCALATE##");
+        if (needsEscalation) {
+          const parts = rawReply.split("##ESCALATE##");
+          rawReply = parts[0].trim();
+          const escalationReason = (parts[1] || "Out-of-context query").trim();
+          await createEscalation({
+            conversationId: conv.conversationId,
+            senderUsername: conv.username,
+            lastMessage: chatHistory[chatHistory.length - 1]?.content ?? "",
+            reason: escalationReason,
+          });
+          addLog(`Escalated @${conv.username}: ${escalationReason}`, "info");
+        }
+
+        const replyText = rawReply;
         if (!replyText) continue;
 
         // Click the composer container to focus it, then find the contenteditable inside

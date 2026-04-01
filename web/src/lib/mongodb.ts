@@ -215,6 +215,35 @@ export interface EmailRecord {
   errorMessage?: string;
 }
 
+// ── Knowledge Base ────────────────────────────────────────────────────────
+
+export interface KnowledgeBaseEntry {
+  _id?: string;
+  botId: "all" | "cindy" | "felix" | "xavier" | "instar";
+  type: "policy" | "faq" | "terms" | "guideline" | "instruction";
+  title: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ── Escalation System ─────────────────────────────────────────────────────
+
+export interface EscalationRecord {
+  _id?: string;
+  botId: "cindy" | "felix" | "xavier" | "instar";
+  platform: string;
+  conversationId: string;
+  senderName: string;
+  senderUsername?: string;
+  lastMessage: string;
+  reason: string;
+  status: "pending" | "resolved" | "reminded";
+  createdAt: string;
+  resolvedAt?: string;
+  reminderSentAt?: string;
+}
+
 // ── Conversation Logs (Cindy ↔ Cara integration) ─────────────────────────
 
 export interface ChatMessage {

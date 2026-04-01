@@ -27,9 +27,13 @@ import {
   ShieldOff,
   CalendarClock,
   User,
+  BookOpen,
+  AlertTriangle,
 } from "lucide-react";
 
 import { BotSwitcher } from "@/components/BotSwitcher";
+import { KnowledgeBasePanel } from "@/components/KnowledgeBasePanel";
+import { EscalationPanel } from "@/components/EscalationPanel";
 
 interface CronLogEntry {
   time: string;
@@ -62,7 +66,7 @@ interface FbSession {
 const FELIX_GRADIENT = "linear-gradient(135deg, #3b82f6, #1d4ed8, #60a5fa)";
 const FELIX_COLOR = "#3b82f6";
 
-type TabId = "fb-auth" | "auto-reply" | "logs";
+type TabId = "fb-auth" | "auto-reply" | "logs" | "knowledge-base" | "escalation";
 
 export default function FelixPage() {
   const router = useRouter();
@@ -387,7 +391,9 @@ export default function FelixPage() {
   const tabs: { id: TabId; label: string; icon: React.ReactNode; count?: number; alert?: boolean }[] = [
     { id: "fb-auth",    label: "Facebook Auth",        icon: <Key size={15} />,           alert: !isConnected },
     { id: "auto-reply", label: "Auto-Reply",            icon: <Bot size={15} /> },
-    { id: "logs",       label: "Conversation Logs",     icon: <History size={15} />,       count: convLogs.length },
+    { id: "logs",           label: "Conversation Logs",  icon: <History size={15} />,       count: convLogs.length },
+    { id: "knowledge-base", label: "Knowledge Base",      icon: <BookOpen size={15} /> },
+    { id: "escalation",     label: "Escalations",         icon: <AlertTriangle size={15} /> },
   ];
 
   return (
@@ -1141,6 +1147,40 @@ export default function FelixPage() {
                 </div>
               ))}
             </div>
+          </div>
+        )}
+
+        {activeTab === "knowledge-base" && (
+          <div className="animate-fade-in" style={{ maxWidth: 760 }}>
+            <div className="mb-6">
+              <h1 className="text-2xl font-extrabold tracking-tight text-white mb-1">
+                Knowledge{" "}
+                <span className="bg-clip-text text-transparent" style={{ backgroundImage: FELIX_GRADIENT }}>
+                  Base
+                </span>
+              </h1>
+              <p className="text-sm" style={{ color: "#5a5e72" }}>
+                Manage company policies, FAQs, and guidelines Felix uses to answer customer queries.
+              </p>
+            </div>
+            <KnowledgeBasePanel botId="felix" accentColor={FELIX_COLOR} />
+          </div>
+        )}
+
+        {activeTab === "escalation" && (
+          <div className="animate-fade-in" style={{ maxWidth: 760 }}>
+            <div className="mb-6">
+              <h1 className="text-2xl font-extrabold tracking-tight text-white mb-1">
+                Human{" "}
+                <span className="bg-clip-text text-transparent" style={{ backgroundImage: FELIX_GRADIENT }}>
+                  Escalations
+                </span>
+              </h1>
+              <p className="text-sm" style={{ color: "#5a5e72" }}>
+                Conversations Felix could not handle — requires your attention.
+              </p>
+            </div>
+            <EscalationPanel botId="felix" accentColor={FELIX_COLOR} />
           </div>
         )}
       </main>

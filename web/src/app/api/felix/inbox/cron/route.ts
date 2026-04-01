@@ -1,6 +1,49 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDatabase } from "@/lib/mongodb";
+import { getDatabase, KnowledgeBaseEntry } from "@/lib/mongodb";
 import puppeteer, { Browser } from "puppeteer";
+
+async function getKnowledgeContext(): Promise<string> {
+  try {
+    const db = await getDatabase();
+    const entries = await db
+      .collection<KnowledgeBaseEntry>("knowledge_base")
+      .find({ $or: [{ botId: "felix" }, { botId: "all" }] })
+      .sort({ updatedAt: -1 })
+      .toArray();
+    if (entries.length === 0) return "";
+    return (
+      "\n\nCOMPANY KNOWLEDGE BASE (use this as your only source of truth):\n" +
+      entries.map((e) => `[${e.type.toUpperCase()}] ${e.title}:\n${e.content}`).join("\n\n")
+    );
+  } catch {
+    return "";
+  }
+}
+
+async function createEscalation(params: {
+  conversationId: string;
+  senderName: string;
+  lastMessage: string;
+  reason: string;
+}): Promise<void> {
+  try {
+    const db = await getDatabase();
+    const existing = await db
+      .collection("escalations")
+      .findOne({ conversationId: params.conversationId, status: "pending" });
+    if (existing) return;
+    await db.collection("escalations").insertOne({
+      botId: "felix",
+      platform: "Facebook",
+      conversationId: params.conversationId,
+      senderName: params.senderName,
+      lastMessage: params.lastMessage,
+      reason: params.reason,
+      status: "pending",
+      createdAt: new Date().toISOString(),
+    });
+  } catch { /* ignored */ }
+}
 
 export const maxDuration = 60;
 
@@ -319,21 +362,53 @@ async function cronTick(c_user: string, xs: string, datr: string | null) {
           content: m.text,
         }));
 
-        // Generate AI reply
+        // Generate AI reply with knowledge base context
+        const knowledgeCtx = await getKnowledgeContext();
+        const systemPromptWithContext = g.felix_systemPrompt + knowledgeCtx + `
+
+ANTI-HALLUCINATION RULES (CRITICAL):
+- Answer ONLY from the Company Knowledge Base above. If the query is not covered, respond with: "Let me confirm this for you — our team will follow up shortly."
+- In that case, include ##ESCALATE## at the very end of your reply followed by a short reason.
+- NEVER invent prices, policies, features, or commitments not in the knowledge base.
+- If you can answer confidently, do NOT include ##ESCALATE##.`;
+
         const aiRes = await fetch("https://api.openai.com/v1/chat/completions", {
           method: "POST",
           headers: { Authorization: `Bearer ${openaiKey}`, "Content-Type": "application/json" },
           body: JSON.stringify({
-            model: "gpt-4o-mini", max_tokens: 150,
+            model: "gpt-4o-mini", max_tokens: 200,
             messages: [
-              { role: "system", content: g.felix_systemPrompt },
+              { role: "system", content: systemPromptWithContext },
               ...chatHistory,
             ],
           }),
         });
         const aiData = await aiRes.json();
-        const replyText = (aiData.choices?.[0]?.message?.content?.trim() || "Thank you for your message!")
-          .replace(/"/g, "'").replace(/\n/g, " ").replace(/\r/g, "");
+        let rawReply = aiData.choices?.[0]?.message?.content?.trim() || "Thank you for your message!";
+
+        // Check for escalation signal
+        const needsEscalation = rawReply.includes("##ESCALATE##");
+        let escalationReason = "";
+        if (needsEscalation) {
+          const parts = rawReply.split("##ESCALATE##");
+          rawReply = parts[0].trim();
+          escalationReason = (parts[1] || "Out-of-context query").trim();
+        }
+
+        const replyText = rawReply.replace(/"/g, "'").replace(/\n/g, " ").replace(/\r/g, "");
+
+        // Handle escalation — log it and send the polite holding reply, then skip normal flow
+        if (needsEscalation) {
+          let sName = thread.aria.includes(',') ? thread.aria.split(',')[1].trim() : "Unknown";
+          sName = sName.replace(/^Unread message\s*/i, '');
+          await createEscalation({
+            conversationId: thread.threadId,
+            senderName: sName,
+            lastMessage: latestMessage,
+            reason: escalationReason,
+          });
+          addCronLog(`Escalated conversation ${thread.threadId}: ${escalationReason}`, "info");
+        }
 
         // Find the composer and type the reply
         const composerSelector = 'div[aria-label="Message"], div[role="textbox"][contenteditable="true"], div[aria-placeholder="Message"]';

@@ -45,13 +45,15 @@ import {
   Info,
 } from "lucide-react";
 import { BotSwitcher } from "@/components/BotSwitcher";
+import { KnowledgeBasePanel } from "@/components/KnowledgeBasePanel";
+import { EscalationPanel } from "@/components/EscalationPanel";
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
 const X_COLOR = "#1d9bf0";
 const X_GRADIENT = "linear-gradient(135deg, #1d9bf0 0%, #0a6fa8 100%)";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type TabId = "auth" | "dm-reply" | "growth" | "read" | "logs";
+type TabId = "auth" | "dm-reply" | "growth" | "read" | "logs" | "knowledge-base" | "escalation";
 
 interface CronLogEntry {
   time: string;
@@ -481,7 +483,9 @@ export default function XavierPage() {
     { id: "dm-reply", label: "DM Auto-Reply",  icon: MessageCircle },
     { id: "growth",   label: "Growth Engine",  icon: TrendingUp },
     { id: "read",     label: "Discovery Feed", icon: BookOpen },
-    { id: "logs",     label: "Analytics",      icon: BarChart2 },
+    { id: "logs",           label: "Analytics",     icon: BarChart2 },
+    { id: "knowledge-base", label: "Knowledge Base", icon: BookOpen },
+    { id: "escalation",     label: "Escalations",    icon: AlertCircle },
   ];
 
   if (checking) {
@@ -1859,6 +1863,39 @@ export default function XavierPage() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+        {activeTab === "knowledge-base" && (
+          <div className="animate-fade-in" style={{ maxWidth: 760 }}>
+            <div className="mb-6">
+              <h1 className="text-2xl font-extrabold tracking-tight text-white mb-1">
+                Knowledge{" "}
+                <span className="bg-clip-text text-transparent" style={{ backgroundImage: X_GRADIENT }}>
+                  Base
+                </span>
+              </h1>
+              <p className="text-sm" style={{ color: "#5a5e72" }}>
+                Manage company policies, FAQs, and guidelines Xavier uses to answer DM queries.
+              </p>
+            </div>
+            <KnowledgeBasePanel botId="xavier" accentColor={X_COLOR} />
+          </div>
+        )}
+
+        {activeTab === "escalation" && (
+          <div className="animate-fade-in" style={{ maxWidth: 760 }}>
+            <div className="mb-6">
+              <h1 className="text-2xl font-extrabold tracking-tight text-white mb-1">
+                Human{" "}
+                <span className="bg-clip-text text-transparent" style={{ backgroundImage: X_GRADIENT }}>
+                  Escalations
+                </span>
+              </h1>
+              <p className="text-sm" style={{ color: "#5a5e72" }}>
+                Conversations Xavier could not handle — requires your attention.
+              </p>
+            </div>
+            <EscalationPanel botId="xavier" accentColor={X_COLOR} />
           </div>
         )}
       </main>
