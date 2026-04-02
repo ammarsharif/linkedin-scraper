@@ -467,46 +467,48 @@ export default function ScraperPage() {
 
           <div className="flex items-center gap-3">
             {userName && (
-              <div className="badge badge-success">
-                <span
-                  className="inline-block h-1.5 w-1.5 rounded-full"
-                  style={{ background: "var(--success)" }}
-                />
-                {userName}
+              <div className="hidden sm:flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl border" style={{
+                background: "rgba(52,211,153,0.1)",
+                borderColor: "rgba(52,211,153,0.2)",
+                color: "#34d399",
+              }}>
+                <span className="h-1.5 w-1.5 rounded-full bg-[#34d399] shadow-[0_0_8px_rgba(52,211,153,0.5)]" />
+                <span className="font-bold">{userName}</span>
               </div>
             )}
 
-            {/* Clear data button — always visible in header */}
+            {/* Clear data button */}
             {(results.length > 0 || profileUrls.trim()) && (
               <button
                 onClick={handleClearData}
                 disabled={loading}
-                className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-all cursor-pointer disabled:opacity-40"
+                className="flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition-all cursor-pointer disabled:opacity-40 active:scale-95 shadow-sm border whitespace-nowrap"
                 style={{
-                  color: confirmClear ? "#f87171" : "var(--text-muted)",
-                  background: confirmClear ? "rgba(239,68,68,0.08)" : "transparent",
-                  border: confirmClear ? "1px solid rgba(239,68,68,0.25)" : "1px solid transparent",
+                  color: confirmClear ? "#f87171" : "rgba(255,255,255,0.5)",
+                  background: confirmClear ? "rgba(239,68,68,0.1)" : "rgba(255,255,255,0.05)",
+                  borderColor: confirmClear ? "rgba(239,68,68,0.2)" : "rgba(255,255,255,0.1)",
                 }}
-                title="Clear all scraped data and start fresh"
               >
                 {confirmClear ? (
                   <>
                     <AlertTriangle size={14} strokeWidth={2.5} />
-                    Confirm clear?
+                    Confirm?
                   </>
                 ) : (
                   <>
                     <Trash2 size={14} />
-                    Clear data
+                    Clear
                   </>
                 )}
               </button>
             )}
 
+            <div style={{ width: 1, height: 20, background: "rgba(255,255,255,0.08)" }} />
+
             <button
               onClick={handleLogout}
-              className="rounded-lg px-3 py-1.5 text-sm transition-colors hover:bg-white/5"
-              style={{ color: "var(--text-secondary)" }}
+              className="flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition-all hover:bg-white/10 active:scale-95 whitespace-nowrap"
+              style={{ color: "rgba(255,255,255,0.4)" }}
             >
               Logout
             </button>

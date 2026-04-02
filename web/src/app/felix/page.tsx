@@ -509,10 +509,10 @@ export default function FelixPage() {
             <button
               onClick={toggleCron}
               disabled={cronLoading}
-              className="flex items-center gap-2.5 text-sm px-4 py-2 rounded-xl font-semibold transition-all cursor-pointer border disabled:opacity-60"
+              className="flex items-center gap-2.5 text-sm px-4 py-2.5 rounded-xl font-bold transition-all cursor-pointer border disabled:opacity-50 active:scale-95 shadow-sm whitespace-nowrap"
               style={{
-                background: cronRunning ? "rgba(239,68,68,0.08)" : "rgba(59,130,246,0.1)",
-                borderColor: cronRunning ? "rgba(239,68,68,0.2)" : "rgba(59,130,246,0.3)",
+                background: cronRunning ? "rgba(239,68,68,0.1)" : "rgba(59,130,246,0.1)",
+                borderColor: cronRunning ? "rgba(239,68,68,0.2)" : "rgba(59,130,246,0.2)",
                 color: cronRunning ? "#ef4444" : FELIX_COLOR,
               }}
             >
@@ -537,35 +537,39 @@ export default function FelixPage() {
       {/* TAB BAR */}
       <div className="relative z-10 mx-auto max-w-7xl px-6 pt-6">
         <div
-          className="flex items-center gap-1 p-1 rounded-xl w-fit"
+          className="flex items-center gap-1 p-1 rounded-xl w-fit overflow-x-auto shadow-sm"
           style={{
             background: "rgba(255,255,255,0.03)",
             border: "1px solid rgba(255,255,255,0.06)",
+            msOverflowStyle: 'none',
+            scrollbarWidth: 'none',
           }}
         >
           {tabs.map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer glass-tab ${activeTab === tab.id ? "nav-active" : ""}`}
+              className={`flex items-center gap-2.5 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all cursor-pointer whitespace-nowrap shrink-0 group active:scale-95 glass-tab ${activeTab === tab.id ? "nav-active" : ""}`}
               style={{
                 background: activeTab === tab.id ? "rgba(59,130,246,0.12)" : "transparent",
-                color: activeTab === tab.id ? FELIX_COLOR : "rgba(255,255,255,0.45)",
+                color: activeTab === tab.id ? FELIX_COLOR : "rgba(255,255,255,0.5)",
                 border: "1px solid",
                 borderColor: activeTab === tab.id ? "rgba(59,130,246,0.3)" : "transparent",
               }}
             >
-              {tab.icon}
+              <span className={`transition-colors ${activeTab === tab.id ? "text-[#3b82f6]" : "text-gray-500 group-hover:text-gray-300"}`}>
+                {tab.icon}
+              </span>
               {tab.label}
               {tab.alert && (
-                <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+                <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0 shadow-[0_0_8px_rgba(251,191,36,0.4)]" />
               )}
               {tab.count !== undefined && tab.count > 0 && (
                 <span
-                  className="ml-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold"
+                  className="ml-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold transition-colors"
                   style={{
-                    background: activeTab === tab.id ? "rgba(59,130,246,0.2)" : "rgba(255,255,255,0.06)",
-                    color: activeTab === tab.id ? FELIX_COLOR : "rgba(255,255,255,0.4)",
+                    background: activeTab === tab.id ? "rgba(59,130,246,0.2)" : "rgba(255,255,255,0.08)",
+                    color: activeTab === tab.id ? FELIX_COLOR : "rgba(255,255,255,0.6)",
                   }}
                 >
                   {tab.count}

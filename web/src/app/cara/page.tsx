@@ -419,14 +419,14 @@ export default function CaraPage() {
           <div className="flex items-center gap-4">
             <button
               onClick={() => router.push("/scraper")}
-              className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer border active:scale-95 shadow-sm whitespace-nowrap"
               style={{
-                background: "rgba(0,0,0,0.4)",
-                borderColor: "rgba(0,180,216,0.3)",
+                background: "rgba(0,180,216,0.1)",
+                borderColor: "rgba(0,180,216,0.2)",
                 color: "#00b4d8",
               }}
             >
-              <Linkedin size={13} strokeWidth={2.5} />
+              <Linkedin size={13} strokeWidth={3} />
               <span>Scraper</span>
             </button>
             <div
@@ -468,7 +468,7 @@ export default function CaraPage() {
           <div className="flex items-center gap-3">
             <button
               onClick={() => setShowAddModal(true)}
-              className="flex items-center gap-2 text-sm px-4 py-2 rounded-lg font-bold transition-all cursor-pointer"
+              className="flex items-center gap-2 text-sm px-4 py-2.5 rounded-xl font-bold transition-all cursor-pointer active:scale-95 whitespace-nowrap"
               style={{
                 background: CARA_GRADIENT,
                 color: "white",
@@ -493,29 +493,33 @@ export default function CaraPage() {
       {/* Tab Bar */}
       <div className="relative z-10 mx-auto max-w-7xl px-6 pt-6">
         <div
-          className="flex items-center gap-1 p-1 rounded-xl w-fit"
+          className="flex items-center gap-1 p-1 rounded-xl w-fit overflow-x-auto shadow-sm"
           style={{
             background: "rgba(255,255,255,0.03)",
             border: "1px solid rgba(255,255,255,0.06)",
+            msOverflowStyle: 'none',
+            scrollbarWidth: 'none',
           }}
         >
           {tabs.map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer"
+              className="flex items-center gap-2.5 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all cursor-pointer whitespace-nowrap shrink-0 group active:scale-95 hover:bg-white/[0.04]"
               style={{
                 background:
                   activeTab === tab.id ? "rgba(244,63,94,0.12)" : "transparent",
                 color:
-                  activeTab === tab.id ? CARA_COLOR : "rgba(255,255,255,0.4)",
+                  activeTab === tab.id ? CARA_COLOR : "rgba(255,255,255,0.5)",
                 border:
                   activeTab === tab.id
-                    ? "1px solid rgba(244,63,94,0.25)"
+                    ? "1px solid rgba(244,63,94,0.2)"
                     : "1px solid transparent",
               }}
             >
-              {tab.icon}
+              <span className={`transition-colors ${activeTab === tab.id ? "text-[#f43f5e]" : "text-gray-500 group-hover:text-gray-300"}`}>
+                {tab.icon}
+              </span>
               {tab.label}
             </button>
           ))}
