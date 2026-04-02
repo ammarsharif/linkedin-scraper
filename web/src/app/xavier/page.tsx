@@ -385,6 +385,10 @@ export default function XavierPage() {
 
   // ── Growth actions ──────────────────────────────────────────────────────────
   const toggleGrowCron = async () => {
+    if (!growRunning && twSession.status === "expired") {
+      showToast("Twitter/X session is expired. Please re-authenticate first.", "error");
+      return;
+    }
     const action = growRunning ? "stop" : "start";
     const res = await fetch("/api/xavier/grow/cron", {
       method: "POST",
@@ -414,6 +418,10 @@ export default function XavierPage() {
 
   // ── DM actions ──────────────────────────────────────────────────────────────
   const toggleDmCron = async () => {
+    if (!dmRunning && twSession.status === "expired") {
+      showToast("Twitter/X session is expired. Please re-authenticate first.", "error");
+      return;
+    }
     const action = dmRunning ? "stop" : "start";
     const res = await fetch("/api/xavier/inbox/cron", {
       method: "POST",

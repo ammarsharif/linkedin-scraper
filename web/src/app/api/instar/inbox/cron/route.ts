@@ -4,6 +4,7 @@ import {
   InstarChatMessage,
   KnowledgeBaseEntry,
 } from "@/lib/mongodb";
+import { createSessionAlert } from "@/lib/sessionAlert";
 import puppeteer, { Browser, Page } from "puppeteer";
 import OpenAI from "openai";
 import { processFollowUps, markFollowUpReplied, registerFollowUp } from "@/lib/followup";
@@ -591,6 +592,8 @@ async function dmCronTick(
       await navigateTo(page, "https://www.instagram.com/direct/inbox/");
       if (page.url().includes("/accounts/login")) {
         addCronLog("Session truly expired – cookies invalid. Update session in settings.", "error");
+        await db.collection("instar_config").updateOne({ type: "ig_session" }, { $set: { status: "expired" } });
+        await createSessionAlert("instar", "Instagram");
         g.instar_inbox_consecutiveErrors++;
         return;
       }

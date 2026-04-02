@@ -258,6 +258,11 @@ export default function FelixPage() {
       setActiveTab("fb-auth");
       return;
     }
+    if (!cronRunning && fbSession.status === "expired") {
+      showToast("Facebook session is expired. Please re-authenticate first.", "error");
+      setActiveTab("fb-auth");
+      return;
+    }
     setCronLoading(true);
     const action = cronRunning ? "stop" : "start";
     try {

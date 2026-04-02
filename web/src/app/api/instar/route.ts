@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDatabase } from "@/lib/mongodb";
+import { resolveSessionAlert } from "@/lib/sessionAlert";
 import { cookies } from "next/headers";
 
 export const maxDuration = 30;
@@ -145,6 +146,8 @@ export async function POST(req: NextRequest) {
       },
       { upsert: true }
     );
+
+    await resolveSessionAlert("instar");
 
     return NextResponse.json({ success: true, message: "Instagram session saved." });
   } catch (err) {

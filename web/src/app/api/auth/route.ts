@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { validateCookie, extractLiAt, extractJsessionId } from "@/lib/linkedin";
+import { resolveSessionAlert } from "@/lib/sessionAlert";
 
 export async function POST(req: NextRequest) {
   try {
@@ -54,6 +55,8 @@ export async function POST(req: NextRequest) {
     response.cookies.set("li_session", rawCookie, { ...cookieOpts, httpOnly: true });
     // Store display name (readable)
     response.cookies.set("li_name", name, { ...cookieOpts, httpOnly: false });
+
+    await resolveSessionAlert("cindy");
 
     return response;
   } catch (err) {

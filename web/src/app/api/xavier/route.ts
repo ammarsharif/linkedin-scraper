@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDatabase } from "@/lib/mongodb";
+import { resolveSessionAlert } from "@/lib/sessionAlert";
 import { cookies } from "next/headers";
 
 // ── GET: session info + settings + today's stats ─────────────────────────────
@@ -135,6 +136,8 @@ export async function POST(req: NextRequest) {
       },
       { upsert: true }
     );
+
+    await resolveSessionAlert("xavier");
 
     return NextResponse.json({ success: true, username });
   } catch (err: any) {

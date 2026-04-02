@@ -11,21 +11,32 @@ if (!MONGODB_URI) {
 
 const DB_NAME = "linkedin-scraper";
 
-let cachedClient: MongoClient | null = null;
 let cachedDb: Db | null = null;
+let indexesEnsured = false;
+
+async function ensureIndexes(db: Db) {
+  if (indexesEnsured) return;
+  indexesEnsured = true;
+  try {
+    await db.collection("escalations").createIndex({ status: 1, createdAt: -1 }, { background: true } as any);
+    await db.collection("session_alerts").createIndex({ status: 1, createdAt: -1 }, { background: true } as any);
+  } catch {
+    // Non-fatal — indexes are an optimisation, not a requirement
+  }
+}
 
 export async function getDatabase(): Promise<Db> {
   if (cachedDb) return cachedDb;
 
   try {
     const client = new MongoClient(MONGODB_URI as string, {
-      connectTimeoutMS: 10000, // 10s connection timeout
+      connectTimeoutMS: 10000,
     });
     await client.connect();
     const db = client.db(DB_NAME);
 
-    cachedClient = client;
     cachedDb = db;
+    ensureIndexes(db); // fire-and-forget — don't block the first request
 
     return db;
   } catch (err: any) {

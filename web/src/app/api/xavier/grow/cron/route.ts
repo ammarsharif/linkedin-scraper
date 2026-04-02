@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDatabase } from "@/lib/mongodb";
+import { createSessionAlert } from "@/lib/sessionAlert";
 import puppeteer, { Browser, Page } from "puppeteer";
 import OpenAI from "openai";
 
@@ -883,6 +884,7 @@ async function growthTick() {
       await db
         .collection("xavier_config")
         .updateOne({ type: "tw_session" }, { $set: { status: "expired" } });
+      await createSessionAlert("xavier", "Twitter/X");
       g.xavier_grow_consecutiveErrors++;
       return;
     }

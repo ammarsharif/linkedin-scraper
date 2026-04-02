@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDatabase } from "@/lib/mongodb";
+import { createSessionAlert } from "@/lib/sessionAlert";
 import puppeteer, { Browser } from "puppeteer";
 import OpenAI from "openai";
 
@@ -862,6 +863,8 @@ async function growCronTick(
             // If session expired, abort the whole tick
             if (followResult === "failed" && page.url().includes("/accounts/login")) {
               addGrowLog("❌ Session expired mid-tick. Aborting.", "error");
+              await db.collection("instar_config").updateOne({ type: "ig_session" }, { $set: { status: "expired" } });
+              await createSessionAlert("instar", "Instagram");
               break;
             }
           } else {

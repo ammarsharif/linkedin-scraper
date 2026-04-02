@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { extractJsessionId } from "@/lib/linkedin";
 import { getDatabase } from "@/lib/mongodb";
+import { createSessionAlert } from "@/lib/sessionAlert";
 import { randomUUID, randomBytes } from "crypto";
 import { processFollowUps, markFollowUpReplied, registerFollowUp } from "@/lib/followup";
 import { KnowledgeBaseEntry } from "@/lib/mongodb";
@@ -209,6 +210,7 @@ async function cronTick(cookieString: string) {
 
     if (!res) {
       addCronLog("LinkedIn rejected request — cookies may be expired.", "error");
+      await createSessionAlert("cindy", "LinkedIn");
       stopCron();
       return;
     }
@@ -216,6 +218,7 @@ async function cronTick(cookieString: string) {
     if (!res.ok) {
       if (res.status === 401) {
         addCronLog("LinkedIn cookies expired (401). Please re-authenticate.", "error");
+        await createSessionAlert("cindy", "LinkedIn");
         stopCron();
         return;
       }

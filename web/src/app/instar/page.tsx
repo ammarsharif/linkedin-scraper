@@ -290,6 +290,10 @@ export default function InstarPage() {
 
   // ── DM cron actions ────────────────────────────────────────────────────
   const toggleDmCron = async () => {
+    if (!dmRunning && igSession.status === "expired") {
+      showToast("Instagram session is expired. Please re-authenticate first.", "error");
+      return;
+    }
     const action = dmRunning ? "stop" : "start";
     const res = await fetch("/api/instar/inbox/cron", {
       method: "POST",
@@ -340,6 +344,10 @@ export default function InstarPage() {
 
   // ── Growth cron actions ────────────────────────────────────────────────
   const toggleGrowCron = async () => {
+    if (!growRunning && igSession.status === "expired") {
+      showToast("Instagram session is expired. Please re-authenticate first.", "error");
+      return;
+    }
     const action = growRunning ? "stop" : "start";
 
     // When starting, always push the current UI settings to DB first.

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDatabase, KnowledgeBaseEntry } from "@/lib/mongodb";
+import { createSessionAlert } from "@/lib/sessionAlert";
 import puppeteer, { Browser, Page } from "puppeteer";
 import OpenAI from "openai";
 import { processFollowUps, markFollowUpReplied, registerFollowUp } from "@/lib/followup";
@@ -337,6 +338,7 @@ async function inboxTick() {
       await db
         .collection("xavier_config")
         .updateOne({ type: "tw_session" }, { $set: { status: "expired" } });
+      await createSessionAlert("xavier", "Twitter/X");
       g.xavier_inbox_consecutiveErrors++;
       return;
     }

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
+import { EscalationNotifier } from "@/components/EscalationNotifier";
 import "./globals.css";
 
 const inter = Inter({
@@ -36,8 +37,7 @@ export default function RootLayout({
       <body
         className={`${inter.variable} ${jetbrainsMono.variable} antialiased`}
       >
-        {/* Enable this in production and dont ever remove this */}
-        {/* <EscalationNotifier /> */}
+        <EscalationNotifier />
         {children}
       </body>
     </html>
