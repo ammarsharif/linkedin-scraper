@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { extractJsessionId } from "@/lib/linkedin";
 import { getDatabase } from "@/lib/mongodb";
 import { randomUUID, randomBytes } from "crypto";
+import { processFollowUps, markFollowUpReplied } from "@/lib/followup";
 
 /**
  * Safe fetch that handles LinkedIn's redirect behavior.
@@ -257,6 +258,9 @@ async function cronTick(cookieString: string) {
         { upsert: true }
       );
 
+      // Auto-mark any active follow-up thread for this user as replied
+      await markFollowUpReplied("cindy", conversationUrn);
+
       // ── Generate AI reply ──
       const openaiKey = process.env.OPENAI_API_KEY;
       if (!openaiKey) {
@@ -382,6 +386,10 @@ async function cronTick(cookieString: string) {
     } else {
       addCronLog(`Processed ${newMessages} new message(s).`, "success");
     }
+
+    // Process any pending follow-ups for Cindy
+    const { sent } = await processFollowUps("cindy", addCronLog);
+    if (sent > 0) addCronLog(`Follow-up scheduler: ${sent} follow-up(s) dispatched.`, "success");
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unknown error";
     addCronLog(`Cron error: ${msg}`, "error");

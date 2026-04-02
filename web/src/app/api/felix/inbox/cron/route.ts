@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDatabase, KnowledgeBaseEntry } from "@/lib/mongodb";
 import puppeteer, { Browser } from "puppeteer";
+import { processFollowUps, markFollowUpReplied } from "@/lib/followup";
 
 async function getKnowledgeContext(): Promise<string> {
   try {
@@ -355,6 +356,9 @@ async function cronTick(c_user: string, xs: string, datr: string | null) {
 
       addCronLog(`Message reads: "${latestMessage.slice(0, 80)}"`, "info");
 
+      // Auto-mark any active follow-up thread for this user as replied
+      await markFollowUpReplied("felix", thread.threadId);
+
       try {
         // Build chatHistory from last 10 messages for AI context
         const chatHistory = conversationMessages.map(m => ({
@@ -460,6 +464,9 @@ ANTI-HALLUCINATION RULES (CRITICAL):
       if (!e.message.includes("ERR_ABORTED")) throw e;
     }
 
+    // Process any pending follow-ups for Felix
+    const { sent } = await processFollowUps("felix", addCronLog);
+    if (sent > 0) addCronLog(`Follow-up scheduler: ${sent} follow-up(s) dispatched.`, "success");
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : "Unknown error";
     addCronLog(`Puppeteer Cron error: ${errMsg}`, "error");

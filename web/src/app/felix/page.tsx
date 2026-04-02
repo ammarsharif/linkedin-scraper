@@ -31,9 +31,11 @@ import {
   AlertTriangle,
 } from "lucide-react";
 
+import { ConfirmModal } from "@/components/ConfirmModal";
 import { BotSwitcher } from "@/components/BotSwitcher";
 import { KnowledgeBasePanel } from "@/components/KnowledgeBasePanel";
 import { EscalationPanel } from "@/components/EscalationPanel";
+import { FollowUpManager } from "@/components/FollowUpManager";
 
 interface CronLogEntry {
   time: string;
@@ -66,11 +68,12 @@ interface FbSession {
 const FELIX_GRADIENT = "linear-gradient(135deg, #3b82f6, #1d4ed8, #60a5fa)";
 const FELIX_COLOR = "#3b82f6";
 
-type TabId = "fb-auth" | "auto-reply" | "logs" | "knowledge-base" | "escalation";
+type TabId = "fb-auth" | "auto-reply" | "logs" | "knowledge-base" | "escalation" | "follow-ups";
 
 export default function FelixPage() {
   const router = useRouter();
   const [checking, setChecking] = useState(true);
+  const [dataFetching, setDataFetching] = useState(true);
   const [activeTab, setActiveTab] = useState<TabId>("fb-auth");
   const [toast, setToast] = useState<{
     message: string;
@@ -103,6 +106,11 @@ export default function FelixPage() {
   const [rawCookies, setRawCookies] = useState("");
   const [fbDtsg, setFbDtsg] = useState("");
   const [clearingSession, setClearingSession] = useState(false);
+
+  // Modals
+  const [showClearSessionConfirm, setShowClearSessionConfirm] = useState(false);
+  const [showClearLogsConfirm, setShowClearLogsConfirm] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   const showToast = useCallback(
     (message: string, type: "success" | "error") => {
@@ -140,10 +148,6 @@ export default function FelixPage() {
     }
   }, []);
 
-  useEffect(() => {
-    if (!checking) loadFbSession();
-  }, [checking, loadFbSession]);
-
   // ── Cron status polling ───────────────────────────────────────────────────
   const fetchCronStatus = useCallback(async () => {
     try {
@@ -161,7 +165,12 @@ export default function FelixPage() {
 
   useEffect(() => {
     if (!checking) {
-      fetchCronStatus();
+      Promise.all([loadFbSession(), fetchCronStatus()]).finally(() => setDataFetching(false));
+    }
+  }, [checking, loadFbSession, fetchCronStatus]);
+
+  useEffect(() => {
+    if (!checking) {
       const interval = setInterval(fetchCronStatus, 30000);
       return () => clearInterval(interval);
     }
@@ -383,7 +392,13 @@ export default function FelixPage() {
     };
   };
 
-  if (checking) return null;
+  if (checking || dataFetching) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#080910", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: `${FELIX_COLOR} transparent` }} />
+      </div>
+    );
+  }
 
   const sessionStatus = sessionStatusConfig();
   const isConnected = fbSession.exists && fbSession.status !== "expired";
@@ -394,11 +409,32 @@ export default function FelixPage() {
     { id: "logs",           label: "Conversation Logs",  icon: <History size={15} />,       count: convLogs.length },
     { id: "knowledge-base", label: "Knowledge Base",      icon: <BookOpen size={15} /> },
     { id: "escalation",     label: "Escalations",         icon: <AlertTriangle size={15} /> },
+    { id: "follow-ups",     label: "Follow-Ups",          icon: <Clock size={15} /> },
   ];
 
   return (
     <div className="relative min-h-screen" style={{ background: "#080910" }}>
       <div className="bg-mesh" />
+
+      <style>{`
+        .glass-tab {
+          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .glass-tab:hover {
+          background: rgba(255, 255, 255, 0.05) !important;
+          color: #fff !important;
+        }
+        .nav-active {
+          box-shadow: 0 0 20px rgba(59, 130, 246, 0.2), inset 0 0 10px rgba(59, 130, 246, 0.1);
+        }
+        .animate-glow {
+          animation: glow 3s ease-in-out infinite;
+        }
+        @keyframes glow {
+          0%, 100% { filter: drop-shadow(0 0 5px rgba(59,130,246,0.3)); }
+          50% { filter: drop-shadow(0 0 15px rgba(59,130,246,0.6)); }
+        }
+      `}</style>
 
       {/* Toast */}
       {toast && (
@@ -434,10 +470,10 @@ export default function FelixPage() {
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2.5">
               <div
-                className="flex items-center justify-center rounded-lg shadow-lg"
+                className="flex items-center justify-center rounded-lg shadow-lg animate-glow"
                 style={{ width: 32, height: 32, background: FELIX_GRADIENT }}
               >
-                <Facebook size={16} stroke="white" />
+                <Facebook size={16} stroke="white" strokeWidth={2.5} />
               </div>
               <div>
                 <p className="text-sm font-bold" style={{ color: "#e5e7eb", lineHeight: 1.2 }}>
@@ -511,11 +547,12 @@ export default function FelixPage() {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer"
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer glass-tab ${activeTab === tab.id ? "nav-active" : ""}`}
               style={{
                 background: activeTab === tab.id ? "rgba(59,130,246,0.12)" : "transparent",
-                color: activeTab === tab.id ? FELIX_COLOR : "rgba(255,255,255,0.4)",
-                border: activeTab === tab.id ? "1px solid rgba(59,130,246,0.25)" : "1px solid transparent",
+                color: activeTab === tab.id ? FELIX_COLOR : "rgba(255,255,255,0.45)",
+                border: "1px solid",
+                borderColor: activeTab === tab.id ? "rgba(59,130,246,0.3)" : "transparent",
               }}
             >
               {tab.icon}
@@ -602,7 +639,7 @@ export default function FelixPage() {
 
                 {fbSession.exists && (
                   <button
-                    onClick={clearFbSession}
+                    onClick={() => setShowClearSessionConfirm(true)}
                     disabled={clearingSession}
                     className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg border cursor-pointer transition-all shrink-0 disabled:opacity-50"
                     style={{
@@ -1085,7 +1122,7 @@ export default function FelixPage() {
                 >
                   <button
                     onClick={() => setExpandedLog(expandedLog === log._id ? null : log._id)}
-                    className="w-full flex items-center justify-between p-5 text-left cursor-pointer hover:bg-white/[0.02] transition-colors"
+                    className="w-full flex items-center justify-between p-5 text-left cursor-pointer hover:bg-white/2 transition-colors"
                   >
                     <div className="flex items-center gap-3">
                       <div
@@ -1183,7 +1220,52 @@ export default function FelixPage() {
             <EscalationPanel botId="felix" accentColor={FELIX_COLOR} />
           </div>
         )}
+
+        {activeTab === "follow-ups" && (
+          <div className="animate-fade-in" style={{ maxWidth: 860 }}>
+            <div className="mb-6">
+              <h1 className="text-2xl font-extrabold tracking-tight text-white mb-1">
+                Automated{" "}
+                <span className="bg-clip-text text-transparent" style={{ backgroundImage: FELIX_GRADIENT }}>
+                  Follow-Ups
+                </span>
+              </h1>
+              <p className="text-sm" style={{ color: "#5a5e72" }}>
+                Track unanswered messages and auto-send follow-ups at scheduled intervals.
+              </p>
+            </div>
+            <FollowUpManager botName="felix" accentColor={FELIX_COLOR} />
+          </div>
+        )}
       </main>
+
+      {/* ══ Confirm Modals ══ */}
+      <ConfirmModal
+        isOpen={showClearSessionConfirm}
+        onClose={() => setShowClearSessionConfirm(false)}
+        onConfirm={clearFbSession}
+        title="Disconnect Facebook"
+        message="Are you sure you want to disconnect your Facebook account? This will permanently remove your session cookies and authentication tokens. Auto-reply will stop working immediately."
+        color="#ef4444"
+      />
+
+      <ConfirmModal
+        isOpen={showClearLogsConfirm}
+        onClose={() => setShowClearLogsConfirm(false)}
+        onConfirm={clearCronLogs}
+        title="Clear Activity Logs"
+        message="Are you sure you want to clear all auto-reply logs? This will permanently remove the history shown in the logs panel. New activity will still be logged."
+        color="#34d399"
+      />
+
+      <ConfirmModal
+        isOpen={showResetConfirm}
+        onClose={() => setShowResetConfirm(false)}
+        onConfirm={resetProcessed}
+        title="Reset Reply Counters"
+        message="Are you sure you want to reset the processed message cache? Felix will treat previously replied-to messages as new if they appear in the inbox again."
+        color="#34d399"
+      />
     </div>
   );
 }

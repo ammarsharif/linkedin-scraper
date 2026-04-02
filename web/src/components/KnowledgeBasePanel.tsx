@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Trash2, Save, BookOpen, RefreshCw } from "lucide-react";
+import { Plus, Trash2, Save, BookOpen, RefreshCw, ChevronDown } from "lucide-react";
+import { ConfirmModal } from "./ConfirmModal";
 
 interface KBEntry {
   _id?: string;
@@ -32,6 +33,8 @@ export function KnowledgeBasePanel({ botId, accentColor }: Props) {
     content: "",
     scope: "bot" as "bot" | "all",
   });
+
+  const [deleteId, setDeleteId] = useState<string | null>(null);
 
   const cardBg = "rgba(255,255,255,0.04)";
   const borderColor = "rgba(255,255,255,0.08)";
@@ -105,6 +108,42 @@ export function KnowledgeBasePanel({ botId, accentColor }: Props) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <style>{`
+        .kb-input {
+          transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .kb-input:hover {
+          background: rgba(255, 255, 255, 0.08) !important;
+          border-color: rgba(255, 255, 255, 0.15) !important;
+        }
+        .kb-input:focus {
+          background: rgba(255, 255, 255, 0.09) !important;
+          border-color: ${accentColor} !important;
+          box-shadow: 0 0 0 3px ${accentColor}18;
+          transform: translateY(-1px);
+        }
+        .kb-btn {
+          transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .kb-btn:hover:not(:disabled) {
+          transform: translateY(-1px);
+          filter: brightness(1.15);
+          box-shadow: 0 4px 12px ${accentColor}25;
+        }
+        .kb-btn:active:not(:disabled) {
+          transform: translateY(0);
+        }
+        .kb-card {
+          transition: all 0.3s ease;
+        }
+        .kb-card:hover {
+          border-color: rgba(255, 255, 255, 0.15) !important;
+          background: rgba(255, 255, 255, 0.06) !important;
+          transform: translateY(-2px);
+          box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+        }
+      `}</style>
+
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -151,37 +190,49 @@ export function KnowledgeBasePanel({ botId, accentColor }: Props) {
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
           {/* Type */}
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <label style={{ color: "rgba(255,255,255,0.5)", fontSize: 11, fontWeight: 600 }}>TYPE</label>
-            <select
-              value={form.type}
-              onChange={(e) => setForm((f) => ({ ...f, type: e.target.value as KBEntry["type"] }))}
-              style={{
-                background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)",
-                borderRadius: 8, padding: "8px 12px", color: "rgba(255,255,255,0.85)",
-                fontSize: 13, outline: "none",
-              }}
-            >
-              {TYPE_OPTIONS.map((t) => (
-                <option key={t} value={t} style={{ background: "#111" }}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
-              ))}
-            </select>
+            <label style={{ color: "rgba(255,255,255,0.4)", fontSize: 10, fontWeight: 700, letterSpacing: "0.05em" }}>TYPE</label>
+            <div style={{ position: "relative" }}>
+              <select
+                value={form.type}
+                onChange={(e) => setForm((f) => ({ ...f, type: e.target.value as KBEntry["type"] }))}
+                className="kb-input"
+                style={{
+                  background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)",
+                  borderRadius: 10, padding: "9px 32px 9px 14px", color: "rgba(255,255,255,0.9)",
+                  fontSize: 13, outline: "none", width: "100%", appearance: "none",
+                  cursor: "pointer", fontWeight: 600,
+                }}
+              >
+                <option value="policy" style={{ background: "#12131f", color: "#fff" }}>Policy</option>
+                <option value="faq" style={{ background: "#12131f", color: "#fff" }}>Faq</option>
+                <option value="terms" style={{ background: "#12131f", color: "#fff" }}>Terms</option>
+                <option value="guideline" style={{ background: "#12131f", color: "#fff" }}>Guideline</option>
+                <option value="instruction" style={{ background: "#12131f", color: "#fff" }}>Instruction</option>
+              </select>
+              <ChevronDown size={14} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", opacity: 0.4 }} />
+            </div>
           </div>
 
           {/* Scope */}
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <label style={{ color: "rgba(255,255,255,0.5)", fontSize: 11, fontWeight: 600 }}>APPLIES TO</label>
-            <select
-              value={form.scope}
-              onChange={(e) => setForm((f) => ({ ...f, scope: e.target.value as "bot" | "all" }))}
-              style={{
-                background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)",
-                borderRadius: 8, padding: "8px 12px", color: "rgba(255,255,255,0.85)",
-                fontSize: 13, outline: "none",
-              }}
-            >
-              <option value="bot" style={{ background: "#111" }}>This bot only</option>
-              <option value="all" style={{ background: "#111" }}>All bots (shared)</option>
-            </select>
+            <label style={{ color: "rgba(255,255,255,0.4)", fontSize: 10, fontWeight: 700, letterSpacing: "0.05em" }}>APPLIES TO</label>
+            <div style={{ position: "relative" }}>
+              <select
+                value={form.scope}
+                onChange={(e) => setForm((f) => ({ ...f, scope: e.target.value as "bot" | "all" }))}
+                className="kb-input"
+                style={{
+                  background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)",
+                  borderRadius: 10, padding: "10px 32px 10px 14px", color: "rgba(255,255,255,0.9)",
+                  fontSize: 13, outline: "none", width: "100%", appearance: "none",
+                  cursor: "pointer", fontWeight: 600,
+                }}
+              >
+                <option value="bot" style={{ background: "#12131f", color: "#fff" }}>This bot only</option>
+                <option value="all" style={{ background: "#12131f", color: "#fff" }}>All bots (shared)</option>
+              </select>
+              <ChevronDown size={14} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", opacity: 0.4 }} />
+            </div>
           </div>
         </div>
 
@@ -220,16 +271,18 @@ export function KnowledgeBasePanel({ botId, accentColor }: Props) {
         <button
           onClick={handleAdd}
           disabled={saving}
+          className="kb-btn"
           style={{
-            background: saving ? "rgba(255,255,255,0.05)" : accentAlpha,
-            border: `1px solid ${accentColor}44`,
-            borderRadius: 10, padding: "10px 16px", cursor: saving ? "not-allowed" : "pointer",
-            color: accentColor, fontWeight: 600, fontSize: 13,
+            background: saving ? "rgba(255,255,255,0.05)" : accentColor,
+            border: "none",
+            borderRadius: 10, padding: "12px 16px", cursor: saving ? "not-allowed" : "pointer",
+            color: "#fff", fontWeight: 700, fontSize: 13,
             display: "flex", alignItems: "center", gap: 8, justifyContent: "center",
+            marginTop: 4,
           }}
         >
-          {saving ? <RefreshCw size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Plus size={14} />}
-          {saving ? "Saving..." : "Add Entry"}
+          {saving ? <RefreshCw size={15} style={{ animation: "spin 1s linear infinite" }} /> : <Plus size={16} strokeWidth={2.5} />}
+          {saving ? "Saving..." : "Add Entry to Knowledge Base"}
         </button>
       </div>
 
@@ -249,9 +302,9 @@ export function KnowledgeBasePanel({ botId, accentColor }: Props) {
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {entries.map((entry) => (
-            <div key={entry._id} style={{
+            <div key={entry._id} className="kb-card" style={{
               background: cardBg, border: `1px solid ${borderColor}`,
-              borderRadius: 12, padding: 14,
+              borderRadius: 14, padding: 18,
             }}>
               <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 8 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -272,7 +325,7 @@ export function KnowledgeBasePanel({ botId, accentColor }: Props) {
                   </span>
                 </div>
                 <button
-                  onClick={() => entry._id && handleDelete(entry._id)}
+                  onClick={() => entry._id && setDeleteId(entry._id)}
                   style={{
                     background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.15)",
                     borderRadius: 7, padding: "5px 8px", cursor: "pointer",
@@ -296,6 +349,14 @@ export function KnowledgeBasePanel({ botId, accentColor }: Props) {
           ))}
         </div>
       )}
+      <ConfirmModal
+        isOpen={!!deleteId}
+        onClose={() => setDeleteId(null)}
+        onConfirm={() => deleteId && handleDelete(deleteId)}
+        title="Delete Entry"
+        message="Are you sure you want to delete this knowledge base entry? This will permanently remove it from the database and it won't be used for future replies."
+        color="#ef4444"
+      />
     </div>
   );
 }

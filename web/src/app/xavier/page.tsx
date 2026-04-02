@@ -47,13 +47,15 @@ import {
 import { BotSwitcher } from "@/components/BotSwitcher";
 import { KnowledgeBasePanel } from "@/components/KnowledgeBasePanel";
 import { EscalationPanel } from "@/components/EscalationPanel";
+import { FollowUpManager } from "@/components/FollowUpManager";
+import { ConfirmModal } from "@/components/ConfirmModal";
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
 const X_COLOR = "#1d9bf0";
 const X_GRADIENT = "linear-gradient(135deg, #1d9bf0 0%, #0a6fa8 100%)";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type TabId = "auth" | "dm-reply" | "growth" | "read" | "logs" | "knowledge-base" | "escalation";
+type TabId = "auth" | "dm-reply" | "growth" | "read" | "logs" | "knowledge-base" | "escalation" | "follow-ups";
 
 interface CronLogEntry {
   time: string;
@@ -135,6 +137,7 @@ function logColor(type: CronLogEntry["type"]) {
 export default function XavierPage() {
   const router = useRouter();
   const [checking, setChecking] = useState(true);
+  const [dataFetching, setDataFetching] = useState(true);
   const [activeTab, setActiveTab] = useState<TabId>("auth");
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
 
@@ -200,6 +203,9 @@ export default function XavierPage() {
   // Metrics state
   const [metrics, setMetrics] = useState<MetricsData | null>(null);
   const [loadingMetrics, setLoadingMetrics] = useState(false);
+
+  // Modals
+  const [showClearSessionConfirm, setShowClearSessionConfirm] = useState(false);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -290,9 +296,7 @@ export default function XavierPage() {
 
   useEffect(() => {
     if (checking) return;
-    loadSession();
-    pollGrowCron();
-    pollInboxCron();
+    Promise.all([loadSession(), pollGrowCron(), pollInboxCron()]).finally(() => setDataFetching(false));
 
     pollRef.current = setInterval(() => {
       pollGrowCron();
@@ -486,12 +490,13 @@ export default function XavierPage() {
     { id: "logs",           label: "Analytics",     icon: BarChart2 },
     { id: "knowledge-base", label: "Knowledge Base", icon: BookOpen },
     { id: "escalation",     label: "Escalations",    icon: AlertCircle },
+    { id: "follow-ups",     label: "Follow-Ups",     icon: Clock },
   ];
 
-  if (checking) {
+  if (checking || dataFetching) {
     return (
-      <div style={{ minHeight: "100vh", background: "#080c10", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <div style={{ color: X_COLOR, fontSize: 24 }}>Loading Xavier...</div>
+      <div className="min-h-screen flex items-center justify-center" style={{ background: "#080910" }}>
+        <div className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: `${X_COLOR} transparent` }} />
       </div>
     );
   }
@@ -679,7 +684,7 @@ export default function XavierPage() {
                   </div>
                 </div>
                 <button
-                  onClick={clearSession}
+                  onClick={() => setShowClearSessionConfirm(true)}
                   className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer"
                   style={{ background: "rgba(239,68,68,0.1)", color: "#ef4444" }}
                 >
@@ -1898,6 +1903,23 @@ export default function XavierPage() {
             <EscalationPanel botId="xavier" accentColor={X_COLOR} />
           </div>
         )}
+
+        {activeTab === "follow-ups" && (
+          <div className="animate-fade-in" style={{ maxWidth: 860 }}>
+            <div className="mb-6">
+              <h1 className="text-2xl font-extrabold tracking-tight text-white mb-1">
+                Automated{" "}
+                <span className="bg-clip-text text-transparent" style={{ backgroundImage: X_GRADIENT }}>
+                  Follow-Ups
+                </span>
+              </h1>
+              <p className="text-sm" style={{ color: "#5a5e72" }}>
+                Track unanswered DMs and auto-send follow-ups at scheduled intervals.
+              </p>
+            </div>
+            <FollowUpManager botName="xavier" accentColor={X_COLOR} />
+          </div>
+        )}
       </main>
 
       <style>{`
@@ -1920,6 +1942,17 @@ export default function XavierPage() {
         .animate-fade-in { animation: fadeIn 0.4s ease-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
       `}</style>
+    
+
+      {/* ══ Confirm Modals ══ */}
+      <ConfirmModal
+        isOpen={showClearSessionConfirm}
+        onClose={() => setShowClearSessionConfirm(false)}
+        onConfirm={clearSession}
+        title="Disconnect Twitter/X"
+        message="Are you sure you want to disconnect your Twitter account? This will permanently remove your session cookies and authentication tokens. Growth actions and auto-reply will stop working immediately."
+        color="#1d9bf0"
+      />
     </div>
   );
 }

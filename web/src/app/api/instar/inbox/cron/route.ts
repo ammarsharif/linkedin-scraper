@@ -6,6 +6,7 @@ import {
 } from "@/lib/mongodb";
 import puppeteer, { Browser, Page } from "puppeteer";
 import OpenAI from "openai";
+import { processFollowUps, markFollowUpReplied } from "@/lib/followup";
 
 async function getKnowledgeContext(): Promise<string> {
   try {
@@ -402,6 +403,10 @@ async function processThread(
   }
 
   addCronLog(`Generating reply to: "${prospectMsg.slice(0, 40)}..."`, "info");
+
+  // Auto-mark any active follow-up thread for this user as replied
+  await markFollowUpReplied("instar", thread.threadId);
+
   const chatHistory = last10.map((m) => ({
     role: (m.isMine ? "assistant" : "user") as "user" | "assistant",
     content: m.text,
@@ -650,6 +655,10 @@ async function dmCronTick(
     if (unreadInbox.length === 0) {
       addCronLog("No unread DMs found.", "info");
     }
+
+    // Process any pending follow-ups for Instar
+    const { sent } = await processFollowUps("instar", addCronLog);
+    if (sent > 0) addCronLog(`Follow-up scheduler: ${sent} follow-up(s) dispatched.`, "success");
 
     g.instar_inbox_consecutiveErrors = 0;
   } catch (err: any) {

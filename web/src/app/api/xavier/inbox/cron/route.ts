@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDatabase, KnowledgeBaseEntry } from "@/lib/mongodb";
 import puppeteer, { Browser, Page } from "puppeteer";
 import OpenAI from "openai";
+import { processFollowUps, markFollowUpReplied } from "@/lib/followup";
 
 async function getKnowledgeContext(): Promise<string> {
   try {
@@ -696,6 +697,9 @@ async function inboxTick() {
 
       addLog(`Generating reply for @${conv.username}...`, "info");
 
+      // Auto-mark any active follow-up thread for this user as replied
+      await markFollowUpReplied("xavier", conv.conversationId);
+
       // Build conversation history for AI (last 10 messages for context)
       const chatHistory: { role: "user" | "assistant"; content: string }[] = messages.slice(-10).map((m: any) => ({
         role: (m.isOutgoing ? "assistant" : "user") as "user" | "assistant",
@@ -870,6 +874,10 @@ ANTI-HALLUCINATION RULES (CRITICAL):
       addLog("8 consecutive errors — auto-stopping inbox bot", "error");
       stopInbox();
     }
+
+    // Process any pending follow-ups for Xavier
+    const { sent } = await processFollowUps("xavier", addLog);
+    if (sent > 0) addLog(`Follow-up scheduler: ${sent} follow-up(s) dispatched.`, "success");
   } catch (err: any) {
     addLog(`Inbox tick error: ${err.message}`, "error");
     g.xavier_inbox_consecutiveErrors++;

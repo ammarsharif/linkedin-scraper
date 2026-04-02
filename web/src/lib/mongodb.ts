@@ -244,6 +244,51 @@ export interface EscalationRecord {
   reminderSentAt?: string;
 }
 
+// ── Follow-Up Tracking System ────────────────────────────────────────────
+
+export type FollowUpBotName = "cindy" | "instar" | "felix" | "zapier";
+
+/** One "expecting reply" thread being tracked */
+export interface FollowUpRecord {
+  _id?: string;
+  botName: FollowUpBotName;
+  userId: string;         // platform-specific conversation/user id
+  userName: string;
+  contactInfo?: string;   // e.g. email, phone, username
+  originalMessageId: string;
+  originalMessageText: string;
+  originalMessageSentAt: string;  // ISO
+  replyReceived: boolean;
+  replyReceivedAt?: string;       // ISO
+  followUpsSent: number;          // 0–5
+  lastFollowupSentAt?: string;    // ISO
+  nextFollowupScheduledAt: string; // ISO — when to fire next
+  status: "active" | "paused" | "stopped" | "completed" | "replied";
+  manuallyStoppedAt?: string;     // ISO
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Per-bot, per-step follow-up message template */
+export interface FollowUpTemplate {
+  _id?: string;
+  botName: FollowUpBotName;
+  followUpNumber: 1 | 2 | 3 | 4 | 5;
+  messageText: string;   // supports {{user_name}}, {{original_message}}, {{days_waiting}}
+  updatedAt: string;
+}
+
+/** Keyword/phrase rule that triggers follow-up tracking on a sent message */
+export interface FollowUpRule {
+  _id?: string;
+  botName: FollowUpBotName;
+  type: "keyword" | "phrase";
+  value: string;
+  enabled: boolean;
+  createdAt: string;
+}
+
 // ── Conversation Logs (Cindy ↔ Cara integration) ─────────────────────────
 
 export interface ChatMessage {

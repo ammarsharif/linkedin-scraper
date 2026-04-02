@@ -38,11 +38,13 @@ import {
 import { BotSwitcher } from "@/components/BotSwitcher";
 import { KnowledgeBasePanel } from "@/components/KnowledgeBasePanel";
 import { EscalationPanel } from "@/components/EscalationPanel";
+import { FollowUpManager } from "@/components/FollowUpManager";
+import { ConfirmModal } from "@/components/ConfirmModal";
 
 const INSTAR_GRADIENT = "linear-gradient(135deg, #f09433, #e6683c, #dc2743, #cc2366, #bc1888)";
 const INSTAR_COLOR = "#e1306c";
 
-type TabId = "ig-auth" | "dm-reply" | "growth" | "logs" | "knowledge-base" | "escalation";
+type TabId = "ig-auth" | "dm-reply" | "growth" | "logs" | "knowledge-base" | "escalation" | "follow-ups";
 
 interface CronLogEntry {
   time: string;
@@ -96,6 +98,7 @@ interface MetricsData {
 export default function InstarPage() {
   const router = useRouter();
   const [checking, setChecking] = useState(true);
+  const [dataFetching, setDataFetching] = useState(true);
   const [activeTab, setActiveTab] = useState<TabId>("ig-auth");
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
 
@@ -147,6 +150,11 @@ export default function InstarPage() {
   // Metrics state
   const [metrics, setMetrics] = useState<MetricsData | null>(null);
   const [loadingMetrics, setLoadingMetrics] = useState(false);
+
+  // Modals
+  const [showClearSessionConfirm, setShowClearSessionConfirm] = useState(false);
+  const [showClearDmLogsConfirm, setShowClearDmLogsConfirm] = useState(false);
+  const [showClearGrowLogsConfirm, setShowClearGrowLogsConfirm] = useState(false);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -220,9 +228,7 @@ export default function InstarPage() {
 
   useEffect(() => {
     if (checking) return;
-    loadSession();
-    pollDmCron();
-    pollGrowCron();
+    Promise.all([loadSession(), pollDmCron(), pollGrowCron()]).finally(() => setDataFetching(false));
 
     pollRef.current = setInterval(() => {
       pollDmCron();
@@ -447,7 +453,7 @@ export default function InstarPage() {
     }
   };
 
-  if (checking) {
+  if (checking || dataFetching) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ background: "#080910" }}>
         <div className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: `${INSTAR_COLOR} transparent` }} />
@@ -462,6 +468,7 @@ export default function InstarPage() {
     { id: "logs",           label: "Analytics",     icon: BarChart2 },
     { id: "knowledge-base", label: "Knowledge Base", icon: BookOpen },
     { id: "escalation",     label: "Escalations",    icon: AlertTriangle },
+    { id: "follow-ups",     label: "Follow-Ups",     icon: Clock },
   ];
 
   return (
@@ -630,7 +637,7 @@ export default function InstarPage() {
                   </div>
                 </div>
                 <button
-                  onClick={clearSession}
+                  onClick={() => setShowClearSessionConfirm(true)}
                   className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer"
                   style={{ background: "rgba(239,68,68,0.1)", color: "#ef4444" }}
                 >
@@ -914,7 +921,7 @@ export default function InstarPage() {
                 </span>
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={(e) => { e.stopPropagation(); clearDmLogs(); }}
+                    onClick={(e) => { e.stopPropagation(); setShowClearDmLogsConfirm(true); }}
                     className="px-3 py-1 rounded-lg text-xs cursor-pointer"
                     style={{ background: "rgba(255,255,255,0.05)", color: "#94a3b8" }}
                   >
@@ -1462,7 +1469,7 @@ export default function InstarPage() {
                 </span>
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={(e) => { e.stopPropagation(); clearGrowLogs(); }}
+                    onClick={(e) => { e.stopPropagation(); setShowClearGrowLogsConfirm(true); }}
                     className="px-3 py-1 rounded-lg text-xs cursor-pointer"
                     style={{ background: "rgba(255,255,255,0.05)", color: "#94a3b8" }}
                   >
@@ -1632,7 +1639,52 @@ export default function InstarPage() {
             <EscalationPanel botId="instar" accentColor={INSTAR_COLOR} />
           </div>
         )}
+
+        {activeTab === "follow-ups" && (
+          <div className="animate-fade-in" style={{ maxWidth: 860 }}>
+            <div className="mb-6">
+              <h1 className="text-2xl font-extrabold tracking-tight text-white mb-1">
+                Automated{" "}
+                <span className="bg-clip-text text-transparent" style={{ backgroundImage: INSTAR_GRADIENT }}>
+                  Follow-Ups
+                </span>
+              </h1>
+              <p className="text-sm" style={{ color: "#5a5e72" }}>
+                Track unanswered messages and auto-send follow-ups at scheduled intervals.
+              </p>
+            </div>
+            <FollowUpManager botName="instar" accentColor={INSTAR_COLOR} />
+          </div>
+        )}
       </main>
+
+      {/* ══ Confirm Modals ══ */}
+      <ConfirmModal
+        isOpen={showClearSessionConfirm}
+        onClose={() => setShowClearSessionConfirm(false)}
+        onConfirm={clearSession}
+        title="Disconnect Instagram"
+        message="Are you sure you want to disconnect your Instagram account? This will permanently remove your session cookies and authentication tokens. Growth actions and auto-reply will stop working immediately."
+        color="#e1306c"
+      />
+
+      <ConfirmModal
+        isOpen={showClearDmLogsConfirm}
+        onClose={() => setShowClearDmLogsConfirm(false)}
+        onConfirm={clearDmLogs}
+        title="Clear DM Logs"
+        message="Are you sure you want to clear all auto-reply logs? This will permanently remove the history shown in the logs panel. New activity will still be logged."
+        color="#e1306c"
+      />
+
+      <ConfirmModal
+        isOpen={showClearGrowLogsConfirm}
+        onClose={() => setShowClearGrowLogsConfirm(false)}
+        onConfirm={clearGrowLogs}
+        title="Clear Growth Logs"
+        message="Are you sure you want to clear all growth activity logs? This will permanently remove the history shown in the logs panel. New activity will still be logged."
+        color="#e1306c"
+      />
     </div>
   );
 }

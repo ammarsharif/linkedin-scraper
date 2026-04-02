@@ -31,9 +31,11 @@ import {
   AlertTriangle,
 } from "lucide-react";
 
+import { ConfirmModal } from "@/components/ConfirmModal";
 import { BotSwitcher } from "@/components/BotSwitcher";
 import { KnowledgeBasePanel } from "@/components/KnowledgeBasePanel";
 import { EscalationPanel } from "@/components/EscalationPanel";
+import { FollowUpManager } from "@/components/FollowUpManager";
 
 interface UnreadMessage {
   conversationUrn: string;
@@ -61,11 +63,12 @@ interface ProcessedReply {
 
 const CINDY_GRADIENT = "linear-gradient(135deg, #10b981, #059669, #34d399)";
 
-type TabId = "inbox" | "auto-reply" | "knowledge-base" | "escalation";
+type TabId = "inbox" | "auto-reply" | "knowledge-base" | "escalation" | "follow-ups";
 
 export default function CindyPage() {
   const router = useRouter();
   const [checking, setChecking] = useState(true);
+  const [dataFetching, setDataFetching] = useState(true);
   const [activeTab, setActiveTab] = useState<TabId>("inbox");
   const [toast, setToast] = useState<{
     message: string;
@@ -89,6 +92,10 @@ export default function CindyPage() {
   const [cronLoading, setCronLoading] = useState(false);
   const [showCronLogs, setShowCronLogs] = useState(false);
   const cronLogEndRef = useRef<HTMLDivElement>(null);
+
+  // Modals
+  const [showClearLogsConfirm, setShowClearLogsConfirm] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   // Timer state
   const [isTimerRunning, setIsTimerRunning] = useState(false);
@@ -152,11 +159,11 @@ export default function CindyPage() {
 
   useEffect(() => {
     if (!checking) {
-      fetchCronStatus();
+      Promise.all([fetchInbox(), fetchCronStatus()]).finally(() => setDataFetching(false));
       const interval = setInterval(fetchCronStatus, 5000);
       return () => clearInterval(interval);
     }
-  }, [checking, fetchCronStatus]);
+  }, [checking, fetchCronStatus, fetchInbox]);
 
   useEffect(() => {
     if (showCronLogs && cronLogEndRef.current) {
@@ -288,7 +295,13 @@ export default function CindyPage() {
     return `${Math.floor(hrs / 24)}d ago`;
   };
 
-  if (checking) return null;
+  if (checking || dataFetching) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#080910", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin" style={{ borderColor: "#10b981 transparent" }} />
+      </div>
+    );
+  }
 
   // ── TAB DATA ──────────────────────────────────────────────────────
   const tabs: { id: TabId; label: string; icon: React.ReactNode; count?: number }[] = [
@@ -305,6 +318,7 @@ export default function CindyPage() {
     },
     { id: "knowledge-base", label: "Knowledge Base", icon: <BookOpen size={15} /> },
     { id: "escalation",     label: "Escalations",    icon: <AlertTriangle size={15} /> },
+    { id: "follow-ups",     label: "Follow-Ups",     icon: <Clock size={15} /> },
   ];
 
   return (
@@ -858,6 +872,24 @@ export default function CindyPage() {
                   <p className="text-xs text-gray-500 mt-1">Last Check</p>
                 </div>
               </div>
+
+              {/* Advanced Actions */}
+              <div className="flex items-center gap-2 mt-4 pt-4 border-t border-white/5">
+                <button
+                  onClick={() => setShowClearLogsConfirm(true)}
+                  className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider font-bold px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400 transition-all cursor-pointer"
+                >
+                  <Trash2 size={10} />
+                  Clear Logs
+                </button>
+                <button
+                  onClick={() => setShowResetConfirm(true)}
+                  className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider font-bold px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400 transition-all cursor-pointer"
+                >
+                  <RotateCcw size={10} />
+                  Reset Counters
+                </button>
+              </div>
             </div>
 
             {/* How it works */}
@@ -961,7 +993,43 @@ export default function CindyPage() {
             <EscalationPanel botId="cindy" accentColor="#10b981" />
           </div>
         )}
+
+        {activeTab === "follow-ups" && (
+          <div className="animate-fade-in" style={{ maxWidth: 860 }}>
+            <div className="mb-6">
+              <h1 className="text-2xl font-extrabold tracking-tight text-white mb-1">
+                Automated{" "}
+                <span className="bg-clip-text text-transparent" style={{ backgroundImage: CINDY_GRADIENT }}>
+                  Follow-Ups
+                </span>
+              </h1>
+              <p className="text-sm" style={{ color: "#5a5e72" }}>
+                Track unanswered messages and auto-send follow-ups at scheduled intervals.
+              </p>
+            </div>
+            <FollowUpManager botName="cindy" accentColor="#10b981" />
+          </div>
+        )}
       </main>
+
+      {/* ══ Confirm Modals ══ */}
+      <ConfirmModal
+        isOpen={showClearLogsConfirm}
+        onClose={() => setShowClearLogsConfirm(false)}
+        onConfirm={clearCronLogs}
+        title="Clear Activity Logs"
+        message="Are you sure you want to clear all auto-reply logs? This will permanently remove the history shown in the logs panel. New activity will still be logged."
+        color="#10b981"
+      />
+
+      <ConfirmModal
+        isOpen={showResetConfirm}
+        onClose={() => setShowResetConfirm(false)}
+        onConfirm={resetProcessed}
+        title="Reset Reply Counters"
+        message="Are you sure you want to reset the processed message cache? Cindy will treat previously replied-to messages as new if they appear in the inbox again."
+        color="#10b981"
+      />
     </div>
   );
 }

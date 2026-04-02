@@ -17,6 +17,17 @@ export function EscalationNotifier() {
   const lastReminderCheck = useRef(0);
 
   useEffect(() => {
+    // Load previously notified IDs from localStorage to prevent duplicate random notifications
+    try {
+      const stored = localStorage.getItem("escalation_notified_ids");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          notifiedIds.current = new Set(parsed);
+        }
+      }
+    } catch {}
+
     // Request notification permission once
     if (
       typeof window !== "undefined" &&
@@ -36,11 +47,13 @@ export function EscalationNotifier() {
         if (!data.success) return;
 
         const pending: any[] = data.escalations ?? [];
+        let hasNewNotifications = false;
 
         for (const esc of pending) {
           const id = String(esc._id);
           if (notifiedIds.current.has(id)) continue;
           notifiedIds.current.add(id);
+          hasNewNotifications = true;
 
           if (
             typeof window !== "undefined" &&
@@ -54,6 +67,12 @@ export function EscalationNotifier() {
             });
           }
         }
+        
+        if (hasNewNotifications) {
+           try {
+              localStorage.setItem("escalation_notified_ids", JSON.stringify(Array.from(notifiedIds.current)));
+           } catch {}
+        }
 
         // Check 12-hour reminders
         const now = Date.now();
@@ -64,7 +83,13 @@ export function EscalationNotifier() {
             const reminderData = await reminderRes.json();
             if (reminderData.reminders > 0) {
               // Re-notify for reminded escalations
+              let hasNewReminders = false;
               for (const esc of reminderData.escalations ?? []) {
+                const tagId = `reminder_${esc.id}`;
+                if (notifiedIds.current.has(tagId)) continue;
+                notifiedIds.current.add(tagId);
+                hasNewReminders = true;
+
                 if (
                   typeof window !== "undefined" &&
                   "Notification" in window &&
@@ -73,9 +98,15 @@ export function EscalationNotifier() {
                   new Notification(`⏰ Reminder — Unresolved Escalation (${esc.botId})`, {
                     body: `${esc.senderName} has been waiting since ${new Date(esc.createdAt).toLocaleString()}.\n\nReason: ${esc.reason}`,
                     icon: "/favicon.ico",
-                    tag: `reminder_${esc.id}`,
+                    tag: tagId,
                   });
                 }
+              }
+              
+              if (hasNewReminders) {
+                 try {
+                    localStorage.setItem("escalation_notified_ids", JSON.stringify(Array.from(notifiedIds.current)));
+                 } catch {}
               }
             }
           }

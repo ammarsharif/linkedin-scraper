@@ -101,6 +101,10 @@ body {
   animation: float-orb 25s ease-in-out infinite reverse;
 }
 
+:root {
+  color-scheme: dark;
+}
+
 @keyframes float-orb {
   0%,
   100% {
