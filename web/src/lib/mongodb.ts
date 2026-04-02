@@ -246,7 +246,7 @@ export interface EscalationRecord {
 
 // ── Follow-Up Tracking System ────────────────────────────────────────────
 
-export type FollowUpBotName = "cindy" | "instar" | "felix" | "zapier";
+export type FollowUpBotName = "cindy" | "instar" | "felix" | "xavier" | "zapier";
 
 /** One "expecting reply" thread being tracked */
 export interface FollowUpRecord {
