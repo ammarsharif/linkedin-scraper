@@ -1,7 +1,50 @@
 import { NextRequest, NextResponse } from "next/server";
 import { extractJsessionId, parseCookieString } from "@/lib/linkedin";
-import { getDatabase } from "@/lib/mongodb";
+import { getDatabase, KnowledgeBaseEntry } from "@/lib/mongodb";
 import { randomUUID, randomBytes } from "crypto";
+
+async function getKnowledgeContext(): Promise<string> {
+  try {
+    const db = await getDatabase();
+    const entries = await db
+      .collection<KnowledgeBaseEntry>("knowledge_base")
+      .find({ $or: [{ botId: "cindy" }, { botId: "all" }] })
+      .sort({ updatedAt: -1 })
+      .toArray();
+    if (entries.length === 0) return "";
+    return (
+      "\n\nCOMPANY KNOWLEDGE BASE (use this as your only source of truth):\n" +
+      entries.map((e) => `[${e.type.toUpperCase()}] ${e.title}:\n${e.content}`).join("\n\n")
+    );
+  } catch {
+    return "";
+  }
+}
+
+async function createEscalation(params: {
+  conversationId: string;
+  senderName: string;
+  lastMessage: string;
+  reason: string;
+}): Promise<void> {
+  try {
+    const db = await getDatabase();
+    const existing = await db
+      .collection("escalations")
+      .findOne({ conversationId: params.conversationId, status: "pending" });
+    if (existing) return;
+    await db.collection("escalations").insertOne({
+      botId: "cindy",
+      platform: "LinkedIn",
+      conversationId: params.conversationId,
+      senderName: params.senderName,
+      lastMessage: params.lastMessage,
+      reason: params.reason,
+      status: "pending",
+      createdAt: new Date().toISOString(),
+    });
+  } catch { /* ignored */ }
+}
 
 /**
  * Safe fetch that handles LinkedIn's redirect behavior.
@@ -280,6 +323,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const knowledgeCtx = await getKnowledgeContext();
+    const systemPromptWithContext = 
+      "You are a professional LinkedIn assistant for Ammar Sharif, a Full Stack Engineer at SparkoSol. Reply briefly, warmly and professionally to LinkedIn messages on his behalf. Keep replies under 3 sentences. Do not use emojis." +
+      knowledgeCtx + `
+
+ANTI-HALLUCINATION RULES (CRITICAL):
+- Answer ONLY from the Company Knowledge Base above. If the query is not covered, reply: "Let me confirm this for you — our team will follow up shortly. ##ESCALATE## <short reason>"
+- NEVER invent prices, policies, features, or commitments not in the knowledge base.
+- If you can answer confidently, do NOT include ##ESCALATE##.`;
+
     const aiRes = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -292,8 +345,7 @@ export async function POST(req: NextRequest) {
         messages: [
           {
             role: "system",
-            content:
-              "You are a professional LinkedIn assistant for Ammar Sharif, a Full Stack Engineer at SparkoSol. Reply briefly, warmly and professionally to LinkedIn messages on his behalf. Keep replies under 3 sentences. Do not use emojis.",
+            content: systemPromptWithContext,
           },
           {
             role: "user",
@@ -304,10 +356,25 @@ export async function POST(req: NextRequest) {
     });
 
     const aiData = await aiRes.json();
-    const replyText = (
-      aiData.choices?.[0]?.message?.content?.trim() ||
-      "Thank you for reaching out! I will get back to you shortly."
-    )
+    let rawReply = aiData.choices?.[0]?.message?.content?.trim() || "";
+    if (!rawReply) {
+      rawReply = "Thank you for reaching out! I will get back to you shortly.";
+    }
+
+    const needsEscalation = rawReply.includes("##ESCALATE##");
+    if (needsEscalation) {
+      const parts = rawReply.split("##ESCALATE##");
+      rawReply = parts[0].trim();
+      const escalationReason = (parts[1] || "Out-of-context query").trim();
+      await createEscalation({
+        conversationId: conversationUrn,
+        senderName: senderName || "LinkedIn User",
+        lastMessage: messageText,
+        reason: escalationReason,
+      });
+    }
+
+    const replyText = rawReply
       .replace(/"/g, "'")
       .replace(/\n/g, " ")
       .replace(/\r/g, "");

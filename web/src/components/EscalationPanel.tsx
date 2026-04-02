@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { AlertTriangle, CheckCircle, Bell, RefreshCw, User } from "lucide-react";
+import { AlertTriangle, CheckCircle, Bell, RefreshCw, User, Trash2 } from "lucide-react";
 
 interface Escalation {
   _id: string;
@@ -25,8 +25,10 @@ interface Props {
 
 export function EscalationPanel({ botId, accentColor }: Props) {
   const [escalations, setEscalations] = useState<Escalation[]>([]);
+  const [counts, setCounts] = useState<Record<string, number>>({ all: 0, pending: 0, resolved: 0 });
   const [loading, setLoading] = useState(false);
-  const [filter, setFilter] = useState<"all" | "pending" | "reminded" | "resolved">("pending");
+  const [filter, setFilter] = useState<"all" | "pending" | "resolved">("pending");
+  const [deleting, setDeleting] = useState(false);
 
   const cardBg = "rgba(255,255,255,0.04)";
   const borderColor = "rgba(255,255,255,0.08)";
@@ -39,7 +41,10 @@ export function EscalationPanel({ botId, accentColor }: Props) {
       if (filter !== "all") params.set("status", filter);
       const res = await fetch(`/api/escalation?${params}`);
       const data = await res.json();
-      if (data.success) setEscalations(data.escalations);
+      if (data.success) {
+        setEscalations(data.escalations);
+        if (data.counts) setCounts(data.counts);
+      }
     } finally {
       setLoading(false);
     }
@@ -53,9 +58,25 @@ export function EscalationPanel({ botId, accentColor }: Props) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id, status: "resolved" }),
     });
-    setEscalations((prev) =>
-      prev.map((e) => (e._id === id ? { ...e, status: "resolved", resolvedAt: new Date().toISOString() } : e))
-    );
+    load(); // Refresh counts and list
+  };
+
+  const deleteEscalation = async (id: string) => {
+    if (!confirm("Are you sure you want to delete this record?")) return;
+    await fetch(`/api/escalation?id=${id}`, { method: "DELETE" });
+    setEscalations((prev) => prev.filter((e) => e._id !== id));
+    load(); // Refresh counts
+  };
+
+  const deleteAllResolved = async () => {
+    if (!confirm("Are you sure you want to permanently delete ALL resolved escalations for this bot?")) return;
+    setDeleting(true);
+    try {
+      await fetch(`/api/escalation?botId=${botId}&deleteAllResolved=true`, { method: "DELETE" });
+      load();
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const statusColor: Record<string, string> = {
@@ -88,18 +109,36 @@ export function EscalationPanel({ botId, accentColor }: Props) {
             }}>{pending} need attention</span>
           )}
         </div>
-        <button
-          onClick={load}
-          disabled={loading}
-          style={{
-            background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)",
-            borderRadius: 8, padding: "6px 10px", cursor: "pointer",
-            color: "rgba(255,255,255,0.5)", display: "flex", alignItems: "center", gap: 6,
-          }}
-        >
-          <RefreshCw size={13} style={{ animation: loading ? "spin 1s linear infinite" : "none" }} />
-          <span style={{ fontSize: 12 }}>Refresh</span>
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <button
+            onClick={load}
+            disabled={loading}
+            style={{
+              background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)",
+              borderRadius: 8, padding: "6px 10px", cursor: "pointer",
+              color: "rgba(255,255,255,0.5)", display: "flex", alignItems: "center", gap: 6,
+            }}
+          >
+            <RefreshCw size={13} style={{ animation: loading ? "spin 1s linear infinite" : "none" }} />
+            <span style={{ fontSize: 12 }}>Refresh</span>
+          </button>
+
+          {counts.resolved > 0 && (
+            <button
+              onClick={deleteAllResolved}
+              disabled={deleting}
+              style={{
+                background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)",
+                borderRadius: 8, padding: "6px 10px", cursor: "pointer",
+                color: "#ef4444", fontSize: 12, fontWeight: 600,
+                display: "flex", alignItems: "center", gap: 6,
+              }}
+            >
+              <Trash2 size={13} />
+              <span>Clear Resolved</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Info box */}
@@ -115,7 +154,7 @@ export function EscalationPanel({ botId, accentColor }: Props) {
 
       {/* Filter tabs */}
       <div style={{ display: "flex", gap: 6 }}>
-        {(["all", "pending", "reminded", "resolved"] as const).map((f) => (
+        {(["all", "pending", "resolved"] as const).map((f) => (
           <button
             key={f}
             onClick={() => setFilter(f)}
@@ -125,9 +164,15 @@ export function EscalationPanel({ botId, accentColor }: Props) {
               borderRadius: 8, padding: "5px 12px", cursor: "pointer",
               color: filter === f ? accentColor : "rgba(255,255,255,0.4)",
               fontSize: 12, fontWeight: 600, textTransform: "capitalize",
+              display: "flex", alignItems: "center", gap: 6,
             }}
           >
-            {f}
+            {f === "pending" ? "Action Needed" : f}
+            <span style={{ 
+              background: filter === f ? accentColor + "33" : "rgba(255,255,255,0.06)",
+              fontSize: 10, padding: "1px 6px", borderRadius: 4,
+              color: filter === f ? accentColor : "rgba(255,255,255,0.3)"
+            }}>{counts[f] || 0}</span>
           </button>
         ))}
       </div>
@@ -224,22 +269,38 @@ export function EscalationPanel({ botId, accentColor }: Props) {
                   )}
                 </div>
 
-                {/* Resolve button */}
-                {esc.status !== "resolved" && (
-                  <button
-                    onClick={() => resolve(esc._id)}
-                    style={{
-                      background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.2)",
-                      borderRadius: 8, padding: "6px 12px", cursor: "pointer",
-                      color: "#10b981", fontSize: 12, fontWeight: 600,
-                      display: "flex", alignItems: "center", gap: 5, flexShrink: 0,
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    <CheckCircle size={12} />
-                    Resolve
-                  </button>
-                )}
+                {/* Action buttons */}
+                <div style={{ display: "flex", gap: 8 }}>
+                  {esc.status !== "resolved" ? (
+                    <button
+                      onClick={() => resolve(esc._id)}
+                      style={{
+                        background: `${accentColor}15`, border: `1px solid ${accentColor}33`,
+                        borderRadius: 8, padding: "6px 12px", cursor: "pointer",
+                        color: accentColor, fontSize: 12, fontWeight: 700,
+                        display: "flex", alignItems: "center", gap: 5, flexShrink: 0,
+                        whiteSpace: "nowrap",
+                        boxShadow: `0 2px 8px ${accentColor}11`,
+                      }}
+                    >
+                      <CheckCircle size={12} />
+                      Resolve
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => deleteEscalation(esc._id)}
+                      style={{
+                        background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)",
+                        borderRadius: 8, padding: "6px 12px", cursor: "pointer",
+                        color: "#ef4444", fontSize: 12, fontWeight: 600,
+                        display: "flex", alignItems: "center", gap: 5, flexShrink: 0,
+                      }}
+                    >
+                      <Trash2 size={12} />
+                      Delete
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           ))}

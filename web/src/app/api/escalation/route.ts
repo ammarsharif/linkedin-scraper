@@ -12,17 +12,42 @@ export async function GET(req: NextRequest) {
 
     const filter: Record<string, any> = {};
     if (botId) filter.botId = botId;
-    if (status) filter.status = status;
+    if (status) {
+      if (status === "pending") {
+        filter.status = { $in: ["pending", "reminded"] };
+      } else {
+        filter.status = status;
+      }
+    }
 
     const db = await getDatabase();
     const escalations = await db
       .collection<EscalationRecord>("escalations")
       .find(filter)
       .sort({ createdAt: -1 })
-      .limit(100)
+      .limit(200)
       .toArray();
 
-    return NextResponse.json({ success: true, escalations });
+    // Counts for buttons (for this bot or all)
+    const countFilter: Record<string, any> = {};
+    if (botId) countFilter.botId = botId;
+
+    const totalCount = await db.collection("escalations").countDocuments(countFilter);
+    const actionNeededCount = await db.collection("escalations").countDocuments({ 
+      ...countFilter, 
+      status: { $in: ["pending", "reminded"] } 
+    });
+    const resolvedCount = await db.collection("escalations").countDocuments({ ...countFilter, status: "resolved" });
+
+    return NextResponse.json({
+      success: true,
+      escalations,
+      counts: {
+        all: totalCount,
+        pending: actionNeededCount,
+        resolved: resolvedCount
+      }
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json({ error: msg }, { status: 500 });
@@ -107,9 +132,22 @@ export async function PATCH(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   try {
     const id = req.nextUrl.searchParams.get("id");
-    if (!id) return NextResponse.json({ error: "id is required." }, { status: 400 });
+    const botId = req.nextUrl.searchParams.get("botId");
+    const deleteAllResolved = req.nextUrl.searchParams.get("deleteAllResolved") === "true";
 
     const db = await getDatabase();
+    const col = db.collection("escalations");
+
+    if (deleteAllResolved && botId) {
+      const result = await col.deleteMany({
+        botId: botId as any,
+        status: "resolved"
+      });
+      return NextResponse.json({ success: true, count: result.deletedCount });
+    }
+
+    if (!id) return NextResponse.json({ error: "id is required." }, { status: 400 });
+
     await db.collection("escalations").deleteOne({ _id: new ObjectId(id) });
 
     return NextResponse.json({ success: true });

@@ -22,7 +22,11 @@ export async function GET(req: NextRequest) {
     const limit    = parseInt(req.nextUrl.searchParams.get("limit") || "100");
 
     const filter: Record<string, any> = {};
-    if (botName) filter.botName = botName;
+    const countFilter: Record<string, any> = {};
+    if (botName) {
+      filter.botName = botName;
+      countFilter.botName = botName;
+    }
     if (status)  filter.status  = status;
     if (userId)  filter.userId  = userId;
 
@@ -39,23 +43,37 @@ export async function GET(req: NextRequest) {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
 
-    const allActive = await db.collection("follow_up_tracking").countDocuments({ botName: botName || { $exists: true }, status: "active" });
+    const allCount = await db.collection("follow_up_tracking").countDocuments(countFilter);
+    const activeCount = await db.collection("follow_up_tracking").countDocuments({ ...countFilter, status: "active" });
+    const pausedCount = await db.collection("follow_up_tracking").countDocuments({ ...countFilter, status: "paused" });
+    const stoppedCount = await db.collection("follow_up_tracking").countDocuments({ ...countFilter, status: "stopped" });
+    const completedCount = await db.collection("follow_up_tracking").countDocuments({ ...countFilter, status: "completed" });
+    const repliedCount = await db.collection("follow_up_tracking").countDocuments({ ...countFilter, status: "replied" });
+
+    // Stats for overview cards
     const repliedToday = await db.collection("follow_up_tracking").countDocuments({
-      botName: botName || { $exists: true },
+      ...countFilter,
       status: "replied",
       replyReceivedAt: { $gte: todayStart.toISOString() },
     });
-    const overdue = await db.collection("follow_up_tracking").countDocuments({
-      botName: botName || { $exists: true },
-      status: "completed",
-      replyReceived: false,
-    });
-    const paused = await db.collection("follow_up_tracking").countDocuments({ botName: botName || { $exists: true }, status: "paused" });
 
     return NextResponse.json({
       success: true,
       records,
-      stats: { active: allActive, repliedToday, overdue, paused },
+      stats: {
+        active: activeCount,
+        repliedToday,
+        overdue: completedCount, // Original code labeled overdue as completed
+        paused: pausedCount
+      },
+      counts: {
+        all: allCount,
+        active: activeCount,
+        paused: pausedCount,
+        stopped: stoppedCount,
+        completed: completedCount,
+        replied: repliedCount
+      }
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unknown error";
@@ -88,7 +106,7 @@ export async function POST(req: NextRequest) {
     // Don't create a second active record for the same user+bot
     const existing = await db
       .collection("follow_up_tracking")
-      .findOne({ botName, userId, status: { $in: ["active", "paused"] } });
+      .findOne({ botName, userId, status: { $in: ["active", "paused"] } } as any);
     if (existing) {
       return NextResponse.json({ success: true, id: existing._id, duplicate: true });
     }
@@ -135,7 +153,7 @@ export async function PATCH(req: NextRequest) {
 
     const db = await getDatabase();
     const col = db.collection<FollowUpRecord>("follow_up_tracking");
-    const record = await col.findOne({ _id: new ObjectId(id) });
+    const record = await col.findOne({ _id: new ObjectId(id) as any });
     if (!record) return NextResponse.json({ error: "Record not found." }, { status: 404 });
 
     const now = new Date().toISOString();
@@ -192,7 +210,7 @@ export async function PATCH(req: NextRequest) {
         return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 });
     }
 
-    await col.updateOne({ _id: new ObjectId(id) }, { $set: update });
+    await col.updateOne({ _id: new ObjectId(id) as any }, { $set: update });
     return NextResponse.json({ success: true });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unknown error";
@@ -200,16 +218,27 @@ export async function PATCH(req: NextRequest) {
   }
 }
 
-// DELETE — remove a record (admin only)
+// DELETE — remove a record
 export async function DELETE(req: NextRequest) {
   try {
     const id = req.nextUrl.searchParams.get("id");
-    if (!id) return NextResponse.json({ error: "id is required." }, { status: 400 });
+    const botName = req.nextUrl.searchParams.get("botName");
+    const deleteAllResolved = req.nextUrl.searchParams.get("deleteAllResolved") === "true";
 
     const db = await getDatabase();
-    await db
-      .collection("follow_up_tracking")
-      .deleteOne({ _id: new ObjectId(id) });
+    const col = db.collection("follow_up_tracking");
+
+    if (deleteAllResolved && botName) {
+      const result = await col.deleteMany({
+        botName: botName as any,
+        status: { $in: ["replied", "completed", "stopped"] }
+      });
+      return NextResponse.json({ success: true, count: result.deletedCount });
+    }
+
+    if (!id) return NextResponse.json({ error: "id is required." }, { status: 400 });
+
+    await col.deleteOne({ _id: new ObjectId(id) as any });
 
     return NextResponse.json({ success: true });
   } catch (err) {
@@ -217,3 +246,4 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
+

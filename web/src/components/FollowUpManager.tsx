@@ -521,8 +521,10 @@ export function FollowUpManager({ botName, accentColor }: Props) {
   const [section, setSection] = useState<"tracking" | "rules" | "templates">("tracking");
   const [records, setRecords] = useState<FollowUpRecord[]>([]);
   const [stats, setStats] = useState<Stats>({ active: 0, repliedToday: 0, overdue: 0, paused: 0 });
+  const [counts, setCounts] = useState<Record<string, number>>({ all: 0, active: 0, paused: 0, stopped: 0, completed: 0, replied: 0 });
   const [loading, setLoading] = useState(false);
   const [statusFilter, setStatusFilter] = useState<"all" | FollowUpRecord["status"]>("all");
+  const [deletingBulk, setDeletingBulk] = useState(false);
   const [historyRecord, setHistoryRecord] = useState<FollowUpRecord | null>(null);
   const [sendRecord, setSendRecord] = useState<FollowUpRecord | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -583,7 +585,11 @@ export function FollowUpManager({ botName, accentColor }: Props) {
       if (statusFilter !== "all") p.set("status", statusFilter);
       const res = await fetch(`/api/follow-up?${p}`);
       const data = await res.json();
-      if (data.success) { setRecords(data.records); setStats(data.stats); }
+      if (data.success) { 
+        setRecords(data.records); 
+        setStats(data.stats); 
+        if (data.counts) setCounts(data.counts);
+      }
     } finally { setLoading(false); }
   }, [botName, statusFilter]);
 
@@ -620,8 +626,21 @@ export function FollowUpManager({ botName, accentColor }: Props) {
   };
 
   const deleteRecord = async (id: string) => {
+    if (!confirm("Delete this follow-up record?")) return;
     await fetch(`/api/follow-up?id=${id}`, { method: "DELETE" });
     setRecords((p) => p.filter((r) => r._id !== id));
+    loadRecords();
+  };
+
+  const deleteResolved = async () => {
+    if (!confirm("Permanently delete all Replied, Stopped, and completed No-reply entries for this bot?")) return;
+    setDeletingBulk(true);
+    try {
+      const res = await fetch(`/api/follow-up?botName=${botName}&deleteAllResolved=true`, { method: "DELETE" });
+      const data = await res.json();
+      showToast(`Cleared ${data.count || 0} entries.`);
+      loadRecords();
+    } finally { setDeletingBulk(false); }
   };
 
   const runNow = async () => {
@@ -840,6 +859,7 @@ export function FollowUpManager({ botName, accentColor }: Props) {
             <RefreshCw size={12} style={{ animation: runningNow ? "spin 0.8s linear infinite" : "none" }} />
             {runningNow ? "Checking…" : "Run Check Now"}
           </button>
+          
           <button
             onClick={loadRecords}
             disabled={loading}
@@ -851,6 +871,22 @@ export function FollowUpManager({ botName, accentColor }: Props) {
           >
             <RefreshCw size={12} style={{ animation: loading ? "spin 1s linear infinite" : "none" }} />
           </button>
+
+          {(counts.replied > 0 || counts.completed > 0 || counts.stopped > 0) && (
+            <button
+              onClick={deleteResolved}
+              disabled={deletingBulk}
+              style={{
+                background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)",
+                borderRadius: 8, padding: "7px 12px", cursor: "pointer",
+                color: "#ef4444", fontSize: 12, fontWeight: 600,
+                display: "flex", alignItems: "center", gap: 6,
+                opacity: deletingBulk ? 0.6 : 1,
+              }}
+            >
+              <Trash2 size={12} /> Clear Resolved
+            </button>
+          )}
         </div>
       </div>
 
@@ -895,15 +931,22 @@ export function FollowUpManager({ botName, accentColor }: Props) {
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {(["all", "active", "paused", "stopped", "completed", "replied"] as const).map((f) => {
               const col = f === "all" ? accentColor : STATUS_COLOR[f];
+              const isActive = statusFilter === f;
               return (
                 <button key={f} onClick={() => setStatusFilter(f)} style={{
-                  background: statusFilter === f ? `${col}18` : "rgba(255,255,255,0.03)",
-                  border: `1px solid ${statusFilter === f ? col + "44" : border}`,
+                  background: isActive ? `${col}18` : "rgba(255,255,255,0.03)",
+                  border: `1px solid ${isActive ? col + "44" : border}`,
                   borderRadius: 7, padding: "4px 12px", cursor: "pointer",
-                  color: statusFilter === f ? col : "rgba(255,255,255,0.3)",
+                  color: isActive ? col : "rgba(255,255,255,0.3)",
                   fontSize: 11, fontWeight: 700, textTransform: "capitalize",
+                  display: "flex", alignItems: "center", gap: 6,
                 }}>
                   {f === "all" ? "All" : STATUS_LABEL[f]}
+                  <span style={{ 
+                    background: isActive ? `${col}33` : "rgba(255,255,255,0.06)",
+                    fontSize: 9, padding: "1px 5px", borderRadius: 4,
+                    color: isActive ? col : "rgba(255,255,255,0.25)"
+                  }}>{counts[f] || 0}</span>
                 </button>
               );
             })}
@@ -1025,6 +1068,9 @@ export function FollowUpManager({ botName, accentColor }: Props) {
                           <button onClick={() => doAction(r._id, "stop")} title="Stop" className="fu-btn" style={iconBtn("#ef4444")}><StopCircle size={12} /></button>
                         )}
                         <button onClick={() => doAction(r._id, "mark-replied")} title="Mark Replied" className="fu-btn" style={iconBtn("#3b82f6")}><CheckCircle2 size={12} /></button>
+                        {["replied", "completed", "stopped"].includes(r.status) && (
+                          <button onClick={() => deleteRecord(r._id)} title="Delete record" className="fu-btn" style={iconBtn("#ef4444")}><Trash2 size={12} /></button>
+                        )}
                         <button onClick={() => setHistoryRecord(r)} title="View History"             className="fu-btn" style={iconBtn("rgba(255,255,255,0.35)")}><History size={12} /></button>
                         <button onClick={() => setExpandedId(isExpanded ? null : r._id)} title="Expand" className="fu-btn" style={{ ...iconBtn("rgba(255,255,255,0.25)"), background: isExpanded ? "rgba(255,255,255,0.1)" : "transparent" }}>
                           {isExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
