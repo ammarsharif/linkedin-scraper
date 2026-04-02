@@ -637,6 +637,14 @@ export default function XavierPage() {
             >
               <tab.icon size={15} />
               {tab.label}
+              {tab.id === "dm-reply" && convLogs.length > 0 && (
+                <span className="ml-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold" style={{ 
+                  background: activeTab === tab.id ? "rgba(29,155,240,0.2)" : "rgba(255,255,255,0.06)",
+                  color: activeTab === tab.id ? X_COLOR : "rgba(255,255,255,0.4)"
+                }}>
+                  {convLogs.length}
+                </span>
+              )}
               {tab.id === "auth" && !twSession.exists && (
                 <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
               )}
@@ -1674,30 +1682,35 @@ export default function XavierPage() {
                           <User size={13} /> @{conv.senderUsername}
                         </span>
                         <span className="text-xs" style={{ color: "#475569" }}>
-                          {conv.messages.length} msgs
+                          {Math.min(conv.messages.length, 10)} msgs
                         </span>
                       </div>
+                      {conv.messages.length > 0 && selectedConv?._id !== conv._id && (
+                        <p className="text-[11px] mt-1.5 truncate" style={{ color: "#4b5268" }}>
+                          {conv.messages[conv.messages.length - 1].text}
+                        </p>
+                      )}
                       {selectedConv?._id === conv._id && (
                         <div className="mt-3 space-y-2">
-                          {conv.messages.map((msg, i) => (
+                          {conv.messages.slice(-10).map((msg, i) => (
                             <div
-                              key={i}
-                              className="flex gap-2 text-xs"
-                              style={{ justifyContent: msg.role === "xavier" ? "flex-end" : "flex-start" }}
-                            >
-                              <div
-                                className="max-w-[80%] px-3 py-2 rounded-xl leading-relaxed"
-                                style={{
-                                  background: msg.role === "xavier" ? "rgba(29,155,240,0.15)" : "rgba(255,255,255,0.05)",
-                                  color: msg.role === "xavier" ? X_COLOR : "#e2e8f0",
-                                }}
-                              >
-                                {msg.text}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
+                               key={i}
+                               className="flex gap-2 text-xs"
+                               style={{ justifyContent: msg.role === "xavier" ? "flex-end" : "flex-start" }}
+                             >
+                               <div
+                                 className="max-w-[80%] px-3 py-2 rounded-xl leading-relaxed"
+                                 style={{
+                                   background: msg.role === "xavier" ? "rgba(29,155,240,0.15)" : "rgba(255,255,255,0.05)",
+                                   color: msg.role === "xavier" ? X_COLOR : "#e2e8f0",
+                                 }}
+                               >
+                                 {msg.text}
+                               </div>
+                             </div>
+                           ))}
+                         </div>
+                       )}
                     </button>
                   ))}
                 </div>

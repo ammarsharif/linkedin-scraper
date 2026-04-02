@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { extractJsessionId } from "@/lib/linkedin";
 import { getDatabase } from "@/lib/mongodb";
 import { randomUUID, randomBytes } from "crypto";
-import { processFollowUps, markFollowUpReplied } from "@/lib/followup";
+import { processFollowUps, markFollowUpReplied, registerFollowUp } from "@/lib/followup";
 import { KnowledgeBaseEntry } from "@/lib/mongodb";
 
 async function getKnowledgeContext(): Promise<string> {
@@ -45,7 +45,10 @@ async function createEscalation(params: {
       status: "pending",
       createdAt: new Date().toISOString(),
     });
-  } catch { /* ignored */ }
+    console.log(`[cindy-escalation] Created escalation for ${params.senderName}`);
+  } catch (err) { 
+    console.error(`[cindy-escalation] Failed:`, err);
+  }
 }
 
 /**
@@ -325,16 +328,18 @@ async function cronTick(cookieString: string) {
               content: (m.body?.text || "").trim(),
             };
           });
-
-        const knowledgeCtx = await getKnowledgeContext();
+      const knowledgeCtx = await getKnowledgeContext();
         const systemPromptWithContext = 
           "You are a professional LinkedIn assistant for Ammar Sharif, a Full Stack Engineer at SparkoSol. Reply briefly, warmly and professionally to LinkedIn messages on his behalf. Keep replies under 3 sentences. Do not use emojis." +
           knowledgeCtx + `
-
+  
 ANTI-HALLUCINATION RULES (CRITICAL):
-- Answer ONLY from the Company Knowledge Base above. If the query is not covered, reply: "Let me confirm this for you — our team will follow up shortly. ##ESCALATE## <short reason>"
-- NEVER invent prices, policies, features, or commitments not in the knowledge base.
-- If you can answer confidently, do NOT include ##ESCALATE##.`;
+- Use ONLY the provided Company Knowledge Base as your source of truth.
+- If the prospect asks something NOT covered in the Knowledge Base, you MUST reply with this EXACT phrase: "Let me confirm this for you — our team will follow up shortly. ##ESCALATE## <short reason>"
+- Replacement of "confirm" with "review" or other words is NOT allowed.
+- You MUST include the tag ##ESCALATE## whenever you cannot answer from the Knowledge Base.
+- NEVER invent prices, technical details, or commitments.
+- If you can answer confidently using the Knowledge Base, do NOT include ##ESCALATE##.`;
 
         const aiRes = await fetch("https://api.openai.com/v1/chat/completions", {
           method: "POST",
@@ -344,28 +349,35 @@ ANTI-HALLUCINATION RULES (CRITICAL):
           },
           body: JSON.stringify({
             model: "gpt-4o-mini",
-            max_tokens: 150,
+            max_tokens: 156, // and some buffer 
             messages: [
-              {
-                role: "system",
-                content: systemPromptWithContext,
-              },
+              { role: "system", content: systemPromptWithContext + `
+              
+EXAMPLES OF ESCALATION:
+Prospect: "Do you have a discount?" (Not in KB)
+Reply: "Let me confirm this for you — our team will follow up shortly. ##ESCALATE## Discount request"
+
+Prospect: "What is your refund policy?" (In KB: No refunds)
+Reply: "We do not offer refunds as per our policy."` },
               ...chatHistory,
             ],
           }),
         });
-
         const aiData = await aiRes.json();
-        let rawReply = aiData.choices?.[0]?.message?.content?.trim() || "";
-        if (!rawReply) {
-          rawReply = "Thank you for reaching out! I will get back to you shortly.";
-        }
+        let rawReply = aiData.choices?.[0]?.message?.content?.trim() || "Thank you for your message!";
 
-        const needsEscalation = rawReply.includes("##ESCALATE##");
+        // DETECTION LOGIC: Explicit tag or specific holding phrase
+        const hasTag = rawReply.includes("##ESCALATE##");
+        const hasPhrase = rawReply.toLowerCase().includes("let me confirm this for you");
+        const needsEscalation = hasTag || hasPhrase;
+
         if (needsEscalation) {
-          const parts = rawReply.split("##ESCALATE##");
-          rawReply = parts[0].trim();
-          const escalationReason = (parts[1] || "Out-of-context query").trim();
+          let escalationReason = "Out-of-context query";
+          if (hasTag) {
+            const parts = rawReply.split("##ESCALATE##");
+            rawReply = parts[0].trim();
+            escalationReason = (parts[1] || "Out-of-context query").trim();
+          }
           await createEscalation({
             conversationId: conversationUrn,
             senderName,
@@ -414,6 +426,9 @@ ANTI-HALLUCINATION RULES (CRITICAL):
           processedMessageIds.add(msgId);
           newMessages++;
           addCronLog(`✅ Replied to ${senderName}: "${replyText.slice(0, 50)}..."`, "success");
+
+          // Register for automated follow-up tracking
+          await registerFollowUp("cindy", conversationUrn, senderName, replyText, "msg_" + Date.now(), false, messageText);
 
           // Log conversation to MongoDB for Cara
           try {
@@ -512,7 +527,40 @@ export async function GET() {
 // ── POST: Start/Stop the cron ────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   try {
-    const { action } = await req.json();
+    const body = await req.json();
+    const { action } = body;
+
+    if (action === "send_followup") {
+      const { conversationUrn, messageText: msg, senderName: sName } = body;
+      if (!storedCookie) {
+        return NextResponse.json({ sent: false, error: "Cron not running" });
+      }
+      try {
+        const csrfToken = extractJsessionId(storedCookie) || "";
+        const rawThreadId = conversationUrn.replace("urn:li:messagingThread:", "");
+        const fullConversationUrn = `urn:li:msg_conversation:(${MY_PROFILE_URN},${rawThreadId})`;
+        const originToken = randomUUID();
+        const trackingId = randomBytes(16).toString("binary");
+        const sendBody = JSON.stringify({
+          message: { body: { attributes: [], text: msg }, renderContentUnions: [], conversationUrn: fullConversationUrn, originToken },
+          mailboxUrn: MY_PROFILE_URN,
+          trackingId,
+          dedupeByClientGeneratedToken: false,
+        });
+        const sendRes = await safeFetch(
+          "https://www.linkedin.com/voyager/api/voyagerMessagingDashMessengerMessages?action=createMessage",
+          { method: "POST", headers: buildSendHeaders(storedCookie, csrfToken), body: sendBody }
+        );
+        if (sendRes?.ok) {
+          addCronLog(`Follow-up sent to ${sName} (${conversationUrn.slice(-10)})`, "success");
+          return NextResponse.json({ sent: true });
+        }
+        return NextResponse.json({ sent: false, error: "LinkedIn rejected send" });
+      } catch (err: any) {
+        addCronLog(`send_followup error: ${err.message}`, "error");
+        return NextResponse.json({ sent: false, error: err.message });
+      }
+    }
 
     if (action === "start") {
       const cookieString = req.cookies.get("li_session")?.value;
@@ -531,6 +579,7 @@ export async function POST(req: NextRequest) {
         });
       }
 
+      processedMessageIds = new Set();
       startCron(cookieString);
       return NextResponse.json({
         success: true,

@@ -85,9 +85,10 @@ interface Props {
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
-
-const SCHEDULE_LABELS = ["+4 hrs", "+12 hrs", "+16 hrs", "+24 hrs", "+48 hrs"];
-const FOLLOWUP_HOURS = [4, 12, 16, 24, 48];
+// Testing intervals (match lib/followup.ts): 2m, 5m, 10m, 20m, 30m between sends.
+// For production change to [24, 48, 72, 96, 168].
+const SCHEDULE_LABELS = ["+2 min", "+5 min", "+10 min", "+20 min", "+30 min"];
+const FOLLOWUP_HOURS = [2 / 60, 5 / 60, 10 / 60, 20 / 60, 30 / 60];
 
 const STATUS_COLOR: Record<string, string> = {
   active:    "#10b981",
@@ -523,12 +524,15 @@ export function FollowUpManager({ botName, accentColor }: Props) {
   const [stats, setStats] = useState<Stats>({ active: 0, repliedToday: 0, overdue: 0, paused: 0 });
   const [counts, setCounts] = useState<Record<string, number>>({ all: 0, active: 0, paused: 0, stopped: 0, completed: 0, replied: 0 });
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false); // true during background refreshes
   const [statusFilter, setStatusFilter] = useState<"all" | FollowUpRecord["status"]>("all");
   const [deletingBulk, setDeletingBulk] = useState(false);
+  const [deleteResolvedConfirmOpen, setDeleteResolvedConfirmOpen] = useState(false);
   const [historyRecord, setHistoryRecord] = useState<FollowUpRecord | null>(null);
   const [sendRecord, setSendRecord] = useState<FollowUpRecord | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [runningNow, setRunningNow] = useState(false);
+  const [actioningId, setActioningId] = useState<string | null>(null); // per-row loading
 
   // Templates
   const [templates, setTemplates] = useState<FollowUpTemplate[]>([]);
@@ -578,19 +582,24 @@ export function FollowUpManager({ botName, accentColor }: Props) {
 
   // ── Data loading ──────────────────────────────────────────────────────────
 
-  const loadRecords = useCallback(async () => {
-    setLoading(true);
+  const loadRecords = useCallback(async (background = false) => {
+    // Use full loading spinner only for initial/empty load; subtle indicator otherwise
+    if (!background) setLoading(true);
+    else setRefreshing(true);
     try {
       const p = new URLSearchParams({ botName });
       if (statusFilter !== "all") p.set("status", statusFilter);
       const res = await fetch(`/api/follow-up?${p}`);
       const data = await res.json();
-      if (data.success) { 
-        setRecords(data.records); 
-        setStats(data.stats); 
+      if (data.success) {
+        setRecords(data.records);
+        setStats(data.stats);
         if (data.counts) setCounts(data.counts);
       }
-    } finally { setLoading(false); }
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, [botName, statusFilter]);
 
   const loadTemplates = useCallback(async () => {
@@ -614,33 +623,87 @@ export function FollowUpManager({ botName, accentColor }: Props) {
   useEffect(() => { if (section === "templates") loadTemplates(); }, [section, loadTemplates]);
   useEffect(() => { if (section === "rules") loadRules(); }, [section, loadRules]);
 
+  // Auto-poll every 30s when on tracking tab
+  useEffect(() => {
+    if (section !== "tracking") return;
+    const id = setInterval(() => loadRecords(true), 30_000);
+    return () => clearInterval(id);
+  }, [section, loadRecords]);
+
   // ── Actions ───────────────────────────────────────────────────────────────
 
   const doAction = async (id: string, action: string) => {
-    await fetch("/api/follow-up", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, action }),
-    });
-    loadRecords();
+    // Optimistic update — change local state immediately so UI doesn't lag
+    const now = new Date().toISOString();
+    setRecords((prev) =>
+      prev.map((r) => {
+        if (r._id !== id) return r;
+        switch (action) {
+          case "pause":        return { ...r, status: "paused"   as const };
+          case "resume":       return { ...r, status: "active"   as const };
+          case "stop":         return { ...r, status: "stopped"  as const };
+          case "mark-replied": return { ...r, status: "replied"  as const, replyReceived: true,  replyReceivedAt: now };
+          case "restart":      return { ...r, status: "active"   as const, followUpsSent: 0, replyReceived: false, replyReceivedAt: undefined };
+          default:             return r;
+        }
+      })
+    );
+    setActioningId(id);
+    try {
+      const res = await fetch("/api/follow-up", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, action }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        showToast(data.error || "Action failed.", false);
+        loadRecords(); // revert optimistic update
+      } else {
+        const labels: Record<string, string> = {
+          pause: "Paused follow-up.",
+          resume: "Follow-up resumed.",
+          stop: "Follow-up stopped.",
+          "mark-replied": "Marked as replied.",
+          restart: "Sequence restarted.",
+        };
+        showToast(labels[action] ?? "Updated.");
+        loadRecords(true); // background refresh to sync any server-computed fields
+      }
+    } catch {
+      showToast("Network error.", false);
+      loadRecords(); // revert
+    } finally {
+      setActioningId(null);
+    }
   };
 
   const deleteRecord = async (id: string) => {
-    if (!confirm("Delete this follow-up record?")) return;
-    await fetch(`/api/follow-up?id=${id}`, { method: "DELETE" });
+    // Optimistically remove from list immediately
     setRecords((p) => p.filter((r) => r._id !== id));
-    loadRecords();
+    setDeleteRecordId(null);
+    try {
+      await fetch(`/api/follow-up?id=${id}`, { method: "DELETE" });
+      loadRecords(true);
+    } catch {
+      showToast("Delete failed.", false);
+      loadRecords();
+    }
   };
 
   const deleteResolved = async () => {
-    if (!confirm("Permanently delete all Replied, Stopped, and completed No-reply entries for this bot?")) return;
     setDeletingBulk(true);
+    setDeleteResolvedConfirmOpen(false);
     try {
       const res = await fetch(`/api/follow-up?botName=${botName}&deleteAllResolved=true`, { method: "DELETE" });
       const data = await res.json();
-      showToast(`Cleared ${data.count || 0} entries.`);
+      showToast(`Cleared ${data.count || 0} resolved entries.`);
       loadRecords();
-    } finally { setDeletingBulk(false); }
+    } catch {
+      showToast("Clear failed.", false);
+    } finally {
+      setDeletingBulk(false);
+    }
   };
 
   const runNow = async () => {
@@ -829,6 +892,11 @@ export function FollowUpManager({ botName, accentColor }: Props) {
           background: #12141f;
           color: white;
         }
+        @keyframes fu-slide {
+          0%   { transform: translateX(-100%); }
+          50%  { transform: translateX(160%); }
+          100% { transform: translateX(160%); }
+        }
       `}</style>
 
       {/* ── Header ── */}
@@ -861,20 +929,20 @@ export function FollowUpManager({ botName, accentColor }: Props) {
           </button>
           
           <button
-            onClick={loadRecords}
-            disabled={loading}
+            onClick={() => loadRecords()}
+            disabled={loading || refreshing}
             style={{
               background: "rgba(255,255,255,0.04)", border: `1px solid ${border}`,
               borderRadius: 8, padding: "7px 10px", cursor: "pointer",
               color: "rgba(255,255,255,0.4)", display: "flex", alignItems: "center",
             }}
           >
-            <RefreshCw size={12} style={{ animation: loading ? "spin 1s linear infinite" : "none" }} />
+            <RefreshCw size={12} style={{ animation: (loading || refreshing) ? "spin 1s linear infinite" : "none" }} />
           </button>
 
           {(counts.replied > 0 || counts.completed > 0 || counts.stopped > 0) && (
             <button
-              onClick={deleteResolved}
+              onClick={() => setDeleteResolvedConfirmOpen(true)}
               disabled={deletingBulk}
               style={{
                 background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)",
@@ -884,7 +952,7 @@ export function FollowUpManager({ botName, accentColor }: Props) {
                 opacity: deletingBulk ? 0.6 : 1,
               }}
             >
-              <Trash2 size={12} /> Clear Resolved
+              <Trash2 size={12} /> {deletingBulk ? "Clearing…" : "Clear Resolved"}
             </button>
           )}
         </div>
@@ -952,9 +1020,21 @@ export function FollowUpManager({ botName, accentColor }: Props) {
             })}
           </div>
 
+          {/* Thin bar shown during background refreshes so existing records stay visible */}
+          {refreshing && (
+            <div style={{ height: 2, borderRadius: 2, background: "rgba(255,255,255,0.06)", overflow: "hidden" }}>
+              <div style={{
+                height: "100%", width: "40%", borderRadius: 2,
+                background: accentColor,
+                animation: "fu-slide 1.2s ease-in-out infinite",
+              }} />
+            </div>
+          )}
+
           {loading && records.length === 0 ? (
-            <div style={{ textAlign: "center", color: "rgba(255,255,255,0.25)", padding: 40, fontSize: 13 }}>
-              Loading…
+            <div style={{ textAlign: "center", padding: 40, display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
+              <RefreshCw size={22} color={accentColor} style={{ animation: "spin 0.9s linear infinite", opacity: 0.6 }} />
+              <span style={{ color: "rgba(255,255,255,0.25)", fontSize: 13 }}>Loading follow-ups…</span>
             </div>
           ) : records.length === 0 ? (
             <div style={{
@@ -972,11 +1052,15 @@ export function FollowUpManager({ botName, accentColor }: Props) {
                 const isOverdue  = r.status === "active" && r.nextFollowupScheduledAt < new Date().toISOString() && r.followUpsSent < 5;
                 const canSend    = (r.status === "active" || r.status === "paused") && r.followUpsSent < 5;
 
+                const isActioning = actioningId === r._id;
+
                 return (
                   <div key={r._id} className="fu-card" style={{
                     background: isOverdue ? "rgba(239,68,68,0.03)" : cardBg,
                     border: `1px solid ${isOverdue ? "rgba(239,68,68,0.2)" : border}`,
                     borderRadius: 16, overflow: "hidden",
+                    opacity: isActioning ? 0.7 : 1,
+                    transition: "opacity 0.15s ease",
                   }}>
                     {/* Main row */}
                     <div style={{ padding: "14px 18px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
@@ -1047,34 +1131,40 @@ export function FollowUpManager({ botName, accentColor }: Props) {
 
                       {/* Action buttons */}
                       <div style={{ display: "flex", gap: 6, flexShrink: 0, marginLeft: "auto", flexWrap: "wrap", alignItems: "center" }}>
-                        {r.status === "active"  && <button onClick={() => doAction(r._id, "pause")}  title="Pause"  className="fu-btn" style={iconBtn("#f59e0b")}><Pause      size={12} /></button>}
-                        {r.status === "paused"  && <button onClick={() => doAction(r._id, "resume")} title="Resume" className="fu-btn" style={iconBtn("#10b981")}><Play       size={12} /></button>}
-                        {canSend && (
-                          <button
-                            onClick={() => setSendRecord(r)}
-                            title="Send Follow-up Now"
-                            className="fu-btn"
-                            style={{
-                              ...iconBtn(accentColor),
-                              background: `${accentColor}18`, border: `1px solid ${accentColor}40`,
-                              gap: 6, padding: "5px 12px", borderRadius: 9,
-                            }}
-                          >
-                            <Send size={12} strokeWidth={2.5} />
-                            <span style={{ fontSize: 11, fontWeight: 800 }}>SEND NOW</span>
-                          </button>
+                        {isActioning ? (
+                          <RefreshCw size={14} color={accentColor} style={{ animation: "spin 0.8s linear infinite", opacity: 0.7 }} />
+                        ) : (
+                          <>
+                            {r.status === "active"  && <button onClick={() => doAction(r._id, "pause")}  title="Pause"  className="fu-btn" style={iconBtn("#f59e0b")}><Pause      size={12} /></button>}
+                            {r.status === "paused"  && <button onClick={() => doAction(r._id, "resume")} title="Resume" className="fu-btn" style={iconBtn("#10b981")}><Play       size={12} /></button>}
+                            {canSend && (
+                              <button
+                                onClick={() => setSendRecord(r)}
+                                title="Send Follow-up Now"
+                                className="fu-btn"
+                                style={{
+                                  ...iconBtn(accentColor),
+                                  background: `${accentColor}18`, border: `1px solid ${accentColor}40`,
+                                  gap: 6, padding: "5px 12px", borderRadius: 9,
+                                }}
+                              >
+                                <Send size={12} strokeWidth={2.5} />
+                                <span style={{ fontSize: 11, fontWeight: 800 }}>SEND NOW</span>
+                              </button>
+                            )}
+                            {(r.status === "active" || r.status === "paused") && (
+                              <button onClick={() => doAction(r._id, "stop")} title="Stop" className="fu-btn" style={iconBtn("#ef4444")}><StopCircle size={12} /></button>
+                            )}
+                            <button onClick={() => doAction(r._id, "mark-replied")} title="Mark Replied" className="fu-btn" style={iconBtn("#3b82f6")}><CheckCircle2 size={12} /></button>
+                            {["replied", "completed", "stopped"].includes(r.status) && (
+                              <button onClick={() => setDeleteRecordId(r._id)} title="Delete record" className="fu-btn" style={iconBtn("#ef4444")}><Trash2 size={12} /></button>
+                            )}
+                            <button onClick={() => setHistoryRecord(r)} title="View History"             className="fu-btn" style={iconBtn("rgba(255,255,255,0.35)")}><History size={12} /></button>
+                            <button onClick={() => setExpandedId(isExpanded ? null : r._id)} title="Expand" className="fu-btn" style={{ ...iconBtn("rgba(255,255,255,0.25)"), background: isExpanded ? "rgba(255,255,255,0.1)" : "transparent" }}>
+                              {isExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                            </button>
+                          </>
                         )}
-                        {(r.status === "active" || r.status === "paused") && (
-                          <button onClick={() => doAction(r._id, "stop")} title="Stop" className="fu-btn" style={iconBtn("#ef4444")}><StopCircle size={12} /></button>
-                        )}
-                        <button onClick={() => doAction(r._id, "mark-replied")} title="Mark Replied" className="fu-btn" style={iconBtn("#3b82f6")}><CheckCircle2 size={12} /></button>
-                        {["replied", "completed", "stopped"].includes(r.status) && (
-                          <button onClick={() => deleteRecord(r._id)} title="Delete record" className="fu-btn" style={iconBtn("#ef4444")}><Trash2 size={12} /></button>
-                        )}
-                        <button onClick={() => setHistoryRecord(r)} title="View History"             className="fu-btn" style={iconBtn("rgba(255,255,255,0.35)")}><History size={12} /></button>
-                        <button onClick={() => setExpandedId(isExpanded ? null : r._id)} title="Expand" className="fu-btn" style={{ ...iconBtn("rgba(255,255,255,0.25)"), background: isExpanded ? "rgba(255,255,255,0.1)" : "transparent" }}>
-                          {isExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-                        </button>
                       </div>
                     </div>
 
@@ -1408,6 +1498,15 @@ export function FollowUpManager({ botName, accentColor }: Props) {
         title="Delete Rule"
         message="Are you sure you want to delete this keyword rule? This action cannot be undone."
         color={accentColor}
+      />
+
+      <ConfirmModal
+        isOpen={deleteResolvedConfirmOpen}
+        onClose={() => setDeleteResolvedConfirmOpen(false)}
+        onConfirm={deleteResolved}
+        title="Clear Resolved Entries"
+        message="Permanently delete all Replied, Stopped, and No-reply entries for this bot? This cannot be undone."
+        color="#ef4444"
       />
     </div>
   );

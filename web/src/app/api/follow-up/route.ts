@@ -4,13 +4,13 @@ import { ObjectId } from "mongodb";
 
 export const maxDuration = 30;
 
-// Follow-up schedule: hours from original message sent at
-const FOLLOWUP_HOURS = [4, 12, 16, 24, 48];
+// Testing intervals — delay AFTER the previous send: 2min, 5min, 10min, 20min, 30min
+// For production change to e.g. [24, 48, 72, 96, 168]
+const FOLLOWUP_HOURS = [2 / 60, 5 / 60, 10 / 60, 20 / 60, 30 / 60];
 
-function computeNextScheduledAt(originalSentAt: string, followUpsSent: number): string | null {
+function computeNextScheduledAt(_originalSentAt: string, followUpsSent: number): string | null {
   if (followUpsSent >= FOLLOWUP_HOURS.length) return null;
-  const base = new Date(originalSentAt).getTime();
-  return new Date(base + FOLLOWUP_HOURS[followUpsSent] * 3600 * 1000).toISOString();
+  return new Date(Date.now() + FOLLOWUP_HOURS[followUpsSent] * 3_600_000).toISOString();
 }
 
 // GET — list follow-up records, filter by botName / status / userId
@@ -39,7 +39,6 @@ export async function GET(req: NextRequest) {
       .toArray();
 
     // Stats summary
-    const now = new Date().toISOString();
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
 

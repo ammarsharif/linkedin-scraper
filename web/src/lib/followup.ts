@@ -7,17 +7,23 @@
 import { getDatabase, FollowUpRecord, FollowUpTemplate } from "@/lib/mongodb";
 
 // ── Schedule ──────────────────────────────────────────────────────────────────
-// Hours from original message sent at which each follow-up fires
-export const FOLLOWUP_HOURS = [4, 12, 16, 24, 48];
+// Delay (in hours) to wait AFTER the previous follow-up before sending the next one.
+// Testing values: 2min → 5min → 10min → 20min → 30min between each send.
+// For production swap to e.g. [24, 48, 72, 96, 168] (1d, 2d, 3d, 4d, 7d).
+export const FOLLOWUP_HOURS = [2 / 60, 5 / 60, 10 / 60, 20 / 60, 30 / 60];
 
+/**
+ * Returns the ISO timestamp for the next follow-up based on the current time.
+ * Each interval is measured FROM NOW (when the previous follow-up was sent),
+ * not from the original message time.
+ */
 export function computeNextScheduledAt(
-  originalSentAt: string,
+  _originalSentAt: string,
   followUpsSent: number
 ): string | null {
   if (followUpsSent >= FOLLOWUP_HOURS.length) return null;
-  const base = new Date(originalSentAt).getTime();
   return new Date(
-    base + FOLLOWUP_HOURS[followUpsSent] * 3_600_000
+    Date.now() + FOLLOWUP_HOURS[followUpsSent] * 3_600_000
   ).toISOString();
 }
 
@@ -56,17 +62,15 @@ export async function dispatchFollowUp(
 
     switch (record.botName) {
       case "cindy": {
-        const res = await fetch(`${baseUrl}/api/cindy/inbox`, {
+        // Calls the cindy cron directly so it can use the stored LinkedIn session
+        const res = await fetch(`${baseUrl}/api/cindy/inbox/cron`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            action: "send_followup",
             conversationUrn: record.userId,
-            messageText: record.originalMessageText,
+            messageText,
             senderName: record.userName,
-            autoSend: true,
-            overrideReply: messageText,
-            isFollowUp: true,
-            followUpNumber,
           }),
         });
         const data = await res.json();
@@ -74,31 +78,29 @@ export async function dispatchFollowUp(
       }
 
       case "felix": {
-        const res = await fetch(`${baseUrl}/api/felix/inbox`, {
+        // Calls the felix cron which has the Puppeteer browser for Facebook E2EE
+        const res = await fetch(`${baseUrl}/api/felix/inbox/cron`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            action: "send_followup",
             threadId: record.userId,
             messageText,
-            isFollowUp: true,
-            followUpNumber,
           }),
         });
         const data = await res.json();
-        return data.success === true;
+        return data.sent === true || data.success === true;
       }
 
       case "instar": {
-        const res = await fetch(`${baseUrl}/api/instar/inbox`, {
+        // Calls the instar cron which has the Puppeteer browser for Instagram
+        const res = await fetch(`${baseUrl}/api/instar/inbox/cron`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            action: "send_followup",
             threadId: record.userId,
             messageText,
-            senderUsername: record.userName,
-            autoSend: true,
-            isFollowUp: true,
-            followUpNumber,
           }),
         });
         const data = await res.json();
@@ -106,16 +108,15 @@ export async function dispatchFollowUp(
       }
 
       case "xavier": {
-        const res = await fetch(`${baseUrl}/api/xavier/inbox`, {
+        // Calls the xavier cron which has the Puppeteer browser for Twitter/X
+        const res = await fetch(`${baseUrl}/api/xavier/inbox/cron`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            action: "send_followup",
             conversationId: record.userId,
             messageText,
             senderUsername: record.userName,
-            autoSend: true,
-            isFollowUp: true,
-            followUpNumber,
           }),
         });
         const data = await res.json();
@@ -288,8 +289,74 @@ export async function messageMatchesFollowUpRule(
       .find({ botName, enabled: true })
       .toArray();
     const lower = messageText.toLowerCase();
-    return rules.some((r: any) => lower.includes(r.value));
+    return rules.some((r: any) => lower.includes(r.value.toLowerCase()));
   } catch {
+    return false;
+  }
+}
+
+/**
+ * Creates or updates a follow-up tracking record if the message matches rules.
+ */
+export async function registerFollowUp(
+  botName: FollowUpRecord["botName"],
+  userId: string,
+  userName: string,
+  originalMessageText: string,
+  originalMessageId: string = "msg_" + Date.now(),
+  force: boolean = false,
+  /**
+   * The user's incoming message to match against follow-up rules.
+   * If not provided, falls back to checking originalMessageText (bot reply).
+   * Always pass the user's message here so keyword rules like "interested"
+   * correctly match what the prospect said, not what the bot replied.
+   */
+  incomingUserMessage?: string
+): Promise<boolean> {
+  try {
+    const isEscalation = originalMessageText.toLowerCase().includes("let me confirm this for you") ||
+                         originalMessageText.includes("##ESCALATE##");
+
+    // Match rules against the user's incoming message (what the prospect said),
+    // not the bot's reply text.
+    const textToMatch = incomingUserMessage ?? originalMessageText;
+
+    // If not forced and doesn't match rules/escalation, skip
+    if (!force && !isEscalation) {
+      const matches = await messageMatchesFollowUpRule(botName, textToMatch);
+      if (!matches) return false;
+    }
+
+    const db = await getDatabase();
+    const now = new Date().toISOString();
+    const nextWait = FOLLOWUP_HOURS[0]; // First follow-up interval
+    const nextScheduled = new Date(Date.now() + nextWait * 3_600_000).toISOString();
+
+    const record: FollowUpRecord = {
+      botName,
+      userId,
+      userName,
+      originalMessageId,
+      originalMessageText,
+      originalMessageSentAt: now,
+      replyReceived: false,
+      followUpsSent: 0,
+      nextFollowupScheduledAt: nextScheduled,
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    // Upsert: replace any existing active/paused for this user to restart the chain
+    await db.collection("follow_up_tracking").updateOne(
+      { botName, userId, status: { $in: ["active", "paused", "replied"] } },
+      { $set: record },
+      { upsert: true }
+    );
+
+    return true;
+  } catch (err) {
+    console.error(`[FollowUp][${botName}] registerFollowUp error:`, err);
     return false;
   }
 }

@@ -6,7 +6,7 @@ import {
 } from "@/lib/mongodb";
 import puppeteer, { Browser, Page } from "puppeteer";
 import OpenAI from "openai";
-import { processFollowUps, markFollowUpReplied } from "@/lib/followup";
+import { processFollowUps, markFollowUpReplied, registerFollowUp } from "@/lib/followup";
 
 async function getKnowledgeContext(): Promise<string> {
   try {
@@ -49,7 +49,10 @@ async function createEscalation(params: {
       status: "pending",
       createdAt: new Date().toISOString(),
     });
-  } catch { /* ignored */ }
+    console.log(`[instar-escalation] Created escalation for ${params.senderUsername}`);
+  } catch (err) { 
+    console.error(`[instar-escalation] Failed:`, err);
+  }
 }
 
 export const maxDuration = 60;
@@ -61,8 +64,8 @@ if (g.instar_inbox_initialized === undefined) {
   g.instar_inbox_cronInterval = null;
   g.instar_inbox_cronRunning = false;
   g.instar_inbox_lastCronRun = null;
-  g.instar_inbox_cronLog = [];
   g.instar_inbox_processedThreadIds = new Set();
+  g.instar_inbox_cacheLastCleared = Date.now();
   g.instar_inbox_consecutiveErrors = 0;
   g.instar_inbox_autoAcceptRequests = true;
   g.instar_inbox_tickRunning = false;
@@ -166,14 +169,16 @@ async function fetchIGThreads(page: Page, pending: boolean): Promise<IGAPIThread
     ? "https://www.instagram.com/api/v1/direct_v2/pending_inbox/"
     : "https://www.instagram.com/api/v1/direct_v2/inbox/?persistent_badging=true&folder=0&thread_message_limit=1&limit=20";
 
-  const result = await page.evaluate(
+  const result: any = await page.evaluate(
     async (apiUrl: string) => {
-      const csrf =
-        document.cookie
-          .split(";")
-          .find((c) => c.trim().startsWith("csrftoken="))
-          ?.split("=")[1] || "";
       try {
+        const docCookie = document.cookie || "";
+        const csrf =
+          docCookie
+            .split(";")
+            .find((c) => c.trim().startsWith("csrftoken="))
+            ?.split("=")[1] || "";
+
         const res = await fetch(apiUrl, {
           headers: {
             "X-CSRFToken": csrf,
@@ -414,27 +419,48 @@ async function processThread(
 
   const knowledgeCtx = await getKnowledgeContext();
   const systemPromptWithContext = g.instar_inbox_systemPrompt + knowledgeCtx + `
-
+  
 ANTI-HALLUCINATION RULES (CRITICAL):
-- Answer ONLY from the Company Knowledge Base above. If the query is not covered, reply: "Let me confirm this for you — our team will follow up shortly. ##ESCALATE## <short reason>"
-- NEVER invent prices, policies, features, or commitments not in the knowledge base.
-- If you can answer confidently, do NOT include ##ESCALATE##.`;
+- Use ONLY the provided Company Knowledge Base as your source of truth.
+- If the prospect asks something NOT covered in the Knowledge Base, you MUST reply with this EXACT phrase: "Let me confirm this for you — our team will follow up shortly. ##ESCALATE## <short reason>"
+- Replacement of "confirm" with "review" or other words is NOT allowed.
+- You MUST include the tag ##ESCALATE## whenever you cannot answer from the Knowledge Base.
+- NEVER invent prices, technical details, or commitments.
+- If you can answer confidently using the Knowledge Base, do NOT include ##ESCALATE##.`;
 
   const aiRes = await openai.chat.completions.create({
     model: "gpt-4o-mini",
     messages: [
-      { role: "system", content: systemPromptWithContext },
+      { role: "system", content: systemPromptWithContext + `
+      
+EXAMPLES OF ESCALATION:
+Prospect: "Do you have a discount?" (Not in KB)
+Reply: "Let me confirm this for you — our team will follow up shortly. ##ESCALATE## Discount request"
+
+Prospect: "What is your refund policy?" (In KB: No refunds)
+Reply: "We do not offer refunds as per our policy."` },
       ...chatHistory,
     ],
     max_tokens: 200,
   });
   let rawReply = aiRes.choices[0].message?.content || "";
 
-  const needsEscalation = rawReply.includes("##ESCALATE##");
+  // DETECTION LOGIC: Explicit tag or specific holding phrase
+  const hasTag = rawReply.includes("##ESCALATE##");
+  const hasPhrase = rawReply.toLowerCase().includes("let me confirm this for you");
+  const needsEscalation = hasTag || hasPhrase;
+
   if (needsEscalation) {
-    const parts = rawReply.split("##ESCALATE##");
-    rawReply = parts[0].trim();
-    const escalationReason = (parts[1] || "Out-of-context query").trim();
+    let escalationReason = "Out-of-context query";
+    if (hasTag) {
+      const parts = rawReply.split("##ESCALATE##");
+      rawReply = parts[0].trim();
+      escalationReason = (parts[1] || "Out-of-context query").trim();
+    } else {
+      // Fallback: If tag is missing but phrase is there, we still escalate
+      // We keep the whole reply as the message to send
+    }
+    
     await createEscalation({
       threadId: thread.threadId,
       senderUsername: thread.senderName,
@@ -480,8 +506,11 @@ ANTI-HALLUCINATION RULES (CRITICAL):
     );
   }
 
-  g.instar_inbox_processedThreadIds.add(cacheKey);
-  if (ok) addCronLog(`✓ Replied to ${thread.senderName}.`, "success");
+    g.instar_inbox_processedThreadIds.add(cacheKey);
+    // Register for automated follow-up tracking
+    await registerFollowUp("instar", thread.threadId, thread.senderName, reply, "msg_" + Date.now(), false, prospectMsg);
+    
+    if (ok) addCronLog(`✓ Replied to ${thread.senderName}.`, "success");
   return ok;
   } finally {
     g.instar_inbox_processingConvs.delete(thread.threadId);
@@ -504,6 +533,12 @@ async function dmCronTick(
          return;
      }
      g.instar_inbox_processingConvs = new Set();
+  }
+
+  // Clear processed cache every 30 minutes to allow re-processing of old threads if needed
+  if (Date.now() - (g.instar_inbox_cacheLastCleared || 0) > 30 * 60 * 1000) {
+    g.instar_inbox_processedThreadIds.clear();
+    g.instar_inbox_cacheLastCleared = Date.now();
   }
   g.instar_inbox_tickRunning = true;
   g.instar_inbox_tickStartedAt = new Date().toISOString();
@@ -723,6 +758,28 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    if (action === "send_followup") {
+      const { threadId, messageText: msg } = body;
+      if (!g.instarBrowser?.connected) {
+        return NextResponse.json({ sent: false, error: "Browser not running" });
+      }
+      // No tickRunning guard — processFollowUps is called from inside the tick itself
+      // so tickRunning is always true at this point. The page is idle by then.
+      try {
+        const browser = await getBrowser();
+        const pages = await browser.pages();
+        let page = pages.find((p) => p.url().includes("instagram.com"));
+        if (!page) page = await browser.newPage();
+        await navigateTo(page, `https://www.instagram.com/direct/t/${threadId}/`);
+        const ok = await sendReply(page, msg);
+        if (ok) addCronLog(`Follow-up sent to thread ${threadId}`, "success");
+        return NextResponse.json({ sent: ok });
+      } catch (err: any) {
+        addCronLog(`send_followup error: ${err.message}`, "error");
+        return NextResponse.json({ sent: false, error: err.message });
+      }
+    }
+
     if (action === "start") {
       if (g.instar_inbox_cronRunning) {
         return NextResponse.json({
@@ -755,6 +812,8 @@ export async function POST(req: NextRequest) {
         };
 
       g.instar_inbox_cronRunning = true;
+      g.instar_inbox_processedThreadIds.clear();
+      g.instar_inbox_cacheLastCleared = Date.now();
       addCronLog("DM cron started.", "success");
 
       // Run immediately, then every 90 seconds

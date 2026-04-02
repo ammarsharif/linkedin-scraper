@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDatabase, KnowledgeBaseEntry } from "@/lib/mongodb";
 import puppeteer, { Browser, Page } from "puppeteer";
 import OpenAI from "openai";
-import { processFollowUps, markFollowUpReplied } from "@/lib/followup";
+import { processFollowUps, markFollowUpReplied, registerFollowUp } from "@/lib/followup";
 
 async function getKnowledgeContext(): Promise<string> {
   try {
@@ -45,7 +45,10 @@ async function createEscalation(params: {
       status: "pending",
       createdAt: new Date().toISOString(),
     });
-  } catch { /* ignored */ }
+    console.log(`[xavier-escalation] Created escalation for ${params.senderUsername}`);
+  } catch (err) { 
+    console.error(`[xavier-escalation] Failed:`, err);
+  }
 }
 
 export const maxDuration = 60;
@@ -709,16 +712,26 @@ async function inboxTick() {
       try {
         const knowledgeCtx = await getKnowledgeContext();
         const systemPromptWithContext = g.xavier_inbox_dmSystemPrompt + knowledgeCtx + `
-
+  
 ANTI-HALLUCINATION RULES (CRITICAL):
-- Answer ONLY from the Company Knowledge Base above. If the query is not covered, reply: "Let me confirm this for you — our team will follow up shortly. ##ESCALATE## <short reason>"
-- NEVER invent prices, policies, features, or commitments not in the knowledge base.
-- If you can answer confidently, do NOT include ##ESCALATE##.`;
+- Use ONLY the provided Company Knowledge Base as your source of truth.
+- If the prospect asks something NOT covered in the Knowledge Base, you MUST reply with this EXACT phrase: "Let me confirm this for you — our team will follow up shortly. ##ESCALATE## <short reason>"
+- Replacement of "confirm" with "review" or other words is NOT allowed.
+- You MUST include the tag ##ESCALATE## whenever you cannot answer from the Knowledge Base.
+- NEVER invent prices, technical details, or commitments.
+- If you can answer confidently using the Knowledge Base, do NOT include ##ESCALATE##.`;
 
         const aiRes = await openai.chat.completions.create({
           model: "gpt-4o-mini",
           messages: [
-            { role: "system", content: systemPromptWithContext },
+            { role: "system", content: systemPromptWithContext + `
+            
+EXAMPLES OF ESCALATION:
+Prospect: "Do you have a discount?" (Not in KB)
+Reply: "Let me confirm this for you — our team will follow up shortly. ##ESCALATE## Discount request"
+
+Prospect: "What is your refund policy?" (In KB: No refunds)
+Reply: "We do not offer refunds as per our policy."` },
             ...chatHistory,
           ],
           max_tokens: 200,
@@ -728,11 +741,18 @@ ANTI-HALLUCINATION RULES (CRITICAL):
         let rawReply = aiRes.choices[0]?.message?.content?.trim() ?? "";
         if (!rawReply) continue;
 
-        const needsEscalation = rawReply.includes("##ESCALATE##");
+        // DETECTION LOGIC: Explicit tag or specific holding phrase
+        const hasTag = rawReply.includes("##ESCALATE##");
+        const hasPhrase = rawReply.toLowerCase().includes("let me confirm this for you");
+        const needsEscalation = hasTag || hasPhrase;
+
         if (needsEscalation) {
-          const parts = rawReply.split("##ESCALATE##");
-          rawReply = parts[0].trim();
-          const escalationReason = (parts[1] || "Out-of-context query").trim();
+          let escalationReason = "Out-of-context query";
+          if (hasTag) {
+            const parts = rawReply.split("##ESCALATE##");
+            rawReply = parts[0].trim();
+            escalationReason = (parts[1] || "Out-of-context query").trim();
+          }
           await createEscalation({
             conversationId: conv.conversationId,
             senderUsername: conv.username,
@@ -809,6 +829,11 @@ ANTI-HALLUCINATION RULES (CRITICAL):
             }
           }
         } catch {}
+
+        addLog(`✓ Replied to @${conv.username}.`, "success");
+
+        // Register for automated follow-up tracking
+        await registerFollowUp("xavier", conv.conversationId, conv.username, replyText, "msg_" + Date.now(), false, lastMsg.text);
 
         // Persist conversation log
         const newMessages = [
@@ -943,6 +968,53 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const { action } = body;
+
+    if (action === "send_followup") {
+      const { conversationId, messageText: msg } = body;
+      if (!g.xavier_inbox_browser) {
+        return NextResponse.json({ sent: false, error: "Browser not running" });
+      }
+      // No tickRunning guard — processFollowUps is called from inside the tick itself.
+      try {
+        const browser = await getOrCreateBrowser();
+        const pages = await browser.pages();
+        let page = pages.find((p) => p.url().includes("x.com") || p.url().includes("twitter.com"));
+        if (!page) page = await browser.newPage();
+        await page.goto(`https://x.com/messages/${conversationId}`, { waitUntil: "domcontentloaded", timeout: 20000 });
+        const panelReady = await page
+          .waitForSelector('[data-testid="dm-composer-container"], [data-testid="dm-message-list"]', { timeout: 12000 })
+          .then(() => true)
+          .catch(() => false);
+        if (!panelReady) {
+          return NextResponse.json({ sent: false, error: "DM panel not loaded" });
+        }
+        await randDelay(800, 1200);
+        const INPUT_SELECTORS = [
+          '[data-testid="dm-composer-container"] [contenteditable="true"]',
+          '[data-testid="dm-composer-container"] [role="textbox"]',
+          '[contenteditable="true"]',
+        ];
+        let inputEl = null;
+        for (const sel of INPUT_SELECTORS) {
+          inputEl = await page.$(sel);
+          if (inputEl) break;
+        }
+        if (!inputEl) return NextResponse.json({ sent: false, error: "Input not found" });
+        await inputEl.click();
+        await randDelay(300, 500);
+        for (const char of msg as string) {
+          await page.keyboard.type(char, { delay: Math.random() * 30 + 15 });
+        }
+        await randDelay(500, 800);
+        await page.keyboard.press("Enter");
+        await randDelay(1000, 1500);
+        addLog(`Follow-up sent to conversation ${conversationId}`, "success");
+        return NextResponse.json({ sent: true });
+      } catch (err: any) {
+        addLog(`send_followup error: ${err.message}`, "error");
+        return NextResponse.json({ sent: false, error: err.message });
+      }
+    }
 
     if (action === "start") {
       const result = startInbox();

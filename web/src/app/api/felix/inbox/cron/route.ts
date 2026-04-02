@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDatabase, KnowledgeBaseEntry } from "@/lib/mongodb";
 import puppeteer, { Browser } from "puppeteer";
-import { processFollowUps, markFollowUpReplied } from "@/lib/followup";
+import { processFollowUps, markFollowUpReplied, registerFollowUp } from "@/lib/followup";
 
 async function getKnowledgeContext(): Promise<string> {
   try {
@@ -43,7 +43,10 @@ async function createEscalation(params: {
       status: "pending",
       createdAt: new Date().toISOString(),
     });
-  } catch { /* ignored */ }
+    console.log(`[felix-escalation] Created escalation for ${params.senderName}`);
+  } catch (err) { 
+    console.error(`[felix-escalation] Failed:`, err);
+  }
 }
 
 export const maxDuration = 60;
@@ -369,20 +372,29 @@ async function cronTick(c_user: string, xs: string, datr: string | null) {
         // Generate AI reply with knowledge base context
         const knowledgeCtx = await getKnowledgeContext();
         const systemPromptWithContext = g.felix_systemPrompt + knowledgeCtx + `
-
+  
 ANTI-HALLUCINATION RULES (CRITICAL):
-- Answer ONLY from the Company Knowledge Base above. If the query is not covered, respond with: "Let me confirm this for you — our team will follow up shortly."
-- In that case, include ##ESCALATE## at the very end of your reply followed by a short reason.
-- NEVER invent prices, policies, features, or commitments not in the knowledge base.
-- If you can answer confidently, do NOT include ##ESCALATE##.`;
+- Use ONLY the provided Company Knowledge Base as your source of truth.
+- If the prospect asks something NOT covered in the Knowledge Base, you MUST reply with this EXACT phrase: "Let me confirm this for you — our team will follow up shortly. ##ESCALATE## <short reason>"
+- Replacement of "confirm" with "review" or other words is NOT allowed.
+- You MUST include the tag ##ESCALATE## whenever you cannot answer from the Knowledge Base.
+- NEVER invent prices, technical details, or commitments.
+- If you can answer confidently using the Knowledge Base, do NOT include ##ESCALATE##.`;
 
         const aiRes = await fetch("https://api.openai.com/v1/chat/completions", {
           method: "POST",
           headers: { Authorization: `Bearer ${openaiKey}`, "Content-Type": "application/json" },
           body: JSON.stringify({
-            model: "gpt-4o-mini", max_tokens: 200,
+            model: "gpt-4o-mini", max_tokens: 210,
             messages: [
-              { role: "system", content: systemPromptWithContext },
+              { role: "system", content: systemPromptWithContext + `
+              
+EXAMPLES OF ESCALATION:
+Prospect: "Do you have a discount?" (Not in KB)
+Reply: "Let me confirm this for you — our team will follow up shortly. ##ESCALATE## Discount request"
+
+Prospect: "What is your refund policy?" (In KB: No refunds)
+Reply: "We do not offer refunds as per our policy."` },
               ...chatHistory,
             ],
           }),
@@ -390,19 +402,18 @@ ANTI-HALLUCINATION RULES (CRITICAL):
         const aiData = await aiRes.json();
         let rawReply = aiData.choices?.[0]?.message?.content?.trim() || "Thank you for your message!";
 
-        // Check for escalation signal
-        const needsEscalation = rawReply.includes("##ESCALATE##");
-        let escalationReason = "";
-        if (needsEscalation) {
-          const parts = rawReply.split("##ESCALATE##");
-          rawReply = parts[0].trim();
-          escalationReason = (parts[1] || "Out-of-context query").trim();
-        }
+        // DETECTION LOGIC: Explicit tag or specific holding phrase
+        const hasTag = rawReply.includes("##ESCALATE##");
+        const hasPhrase = rawReply.toLowerCase().includes("let me confirm this for you");
+        const needsEscalation = hasTag || hasPhrase;
 
-        const replyText = rawReply.replace(/"/g, "'").replace(/\n/g, " ").replace(/\r/g, "");
-
-        // Handle escalation — log it and send the polite holding reply, then skip normal flow
         if (needsEscalation) {
+          let escalationReason = "Out-of-context query";
+          if (hasTag) {
+            const parts = rawReply.split("##ESCALATE##");
+            rawReply = parts[0].trim();
+            escalationReason = (parts[1] || "Out-of-context query").trim();
+          }
           let sName = thread.aria.includes(',') ? thread.aria.split(',')[1].trim() : "Unknown";
           sName = sName.replace(/^Unread message\s*/i, '');
           await createEscalation({
@@ -411,8 +422,10 @@ ANTI-HALLUCINATION RULES (CRITICAL):
             lastMessage: latestMessage,
             reason: escalationReason,
           });
-          addCronLog(`Escalated conversation ${thread.threadId}: ${escalationReason}`, "info");
+          addCronLog(`Escalated ${thread.threadId}: ${escalationReason}`, "info");
         }
+
+        const replyText = rawReply.replace(/"/g, "'").replace(/\n/g, " ").replace(/\r/g, "");
 
         // Find the composer and type the reply
         const composerSelector = 'div[aria-label="Message"], div[role="textbox"][contenteditable="true"], div[aria-placeholder="Message"]';
@@ -426,6 +439,11 @@ ANTI-HALLUCINATION RULES (CRITICAL):
         addCronLog(`Replied to ${thread.threadId}: "${replyText.slice(0, 50)}..."`, "success");
         g.felix_processedMessageIds.add(msgId);
         g.felix_consecutiveErrors = 0;
+
+        // Register for automated follow-up tracking
+        let sn = thread.aria.includes(",") ? thread.aria.split(",")[1].trim() : "Unknown";
+        sn = sn.replace(/^Unread message\s*/i, "");
+        await registerFollowUp("felix", thread.threadId, sn, replyText, "msg_" + Date.now(), false, latestMessage);
 
         // Log to DB
         let senderName = thread.aria.includes(',') ? thread.aria.split(',')[1].trim() : "Unknown";
@@ -526,7 +544,39 @@ export async function GET() {
 // ── POST: Start / Stop / Update ───────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   try {
-    const { action, prompt } = await req.json();
+    const body = await req.json();
+    const { action, prompt } = body;
+
+    if (action === "send_followup") {
+      const { threadId, messageText: msg } = body;
+      if (!g.felixBrowser?.connected) {
+        return NextResponse.json({ sent: false, error: "Browser not running" });
+      }
+      // No tickRunning guard — processFollowUps is called from inside the tick itself.
+      try {
+        const browser = await getBrowser();
+        const pages = await browser.pages();
+        let page = pages.find((p) => p.url().includes("facebook.com"));
+        if (!page) page = await browser.newPage();
+        try {
+          await page.goto(`https://www.facebook.com/messages/t/${threadId}`, { waitUntil: "domcontentloaded", timeout: 30000 });
+        } catch (e: any) { if (!e.message.includes("ERR_ABORTED")) throw e; }
+        await new Promise((r) => setTimeout(r, 4000));
+        const composerSelector = 'div[aria-label="Message"], div[role="textbox"][contenteditable="true"], div[aria-placeholder="Message"]';
+        await page.waitForSelector(composerSelector, { timeout: 10000 });
+        await page.click(composerSelector);
+        await new Promise((r) => setTimeout(r, 300));
+        const replyText = msg.replace(/"/g, "'").replace(/\n/g, " ").replace(/\r/g, "");
+        await page.keyboard.type(replyText, { delay: 15 });
+        await new Promise((r) => setTimeout(r, 500));
+        await page.keyboard.press("Enter");
+        addCronLog(`Follow-up sent to thread ${threadId}`, "success");
+        return NextResponse.json({ sent: true, success: true });
+      } catch (err: any) {
+        addCronLog(`send_followup error: ${err.message}`, "error");
+        return NextResponse.json({ sent: false, error: err.message });
+      }
+    }
 
     if (action === "start") {
       let c_user: string, xs: string, datr: string | null = null;
@@ -554,6 +604,7 @@ export async function POST(req: NextRequest) {
       if (!c_user || !xs) return NextResponse.json({ error: "Session incomplete (missing c_user or xs)." }, { status: 401 });
       if (g.felix_cronRunning) return NextResponse.json({ success: true, message: "Cron is already running.", running: true });
 
+      g.felix_processedMessageIds = new Set();
       startCron(c_user, xs, datr);
       return NextResponse.json({ success: true, message: "Puppeteer Cron started.", running: true });
     }

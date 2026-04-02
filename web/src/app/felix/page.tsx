@@ -1134,9 +1134,14 @@ export default function FelixPage() {
                       <div>
                         <h3 className="text-sm font-bold text-gray-100">{log.senderName || "Unknown"}</h3>
                         <p className="text-xs text-gray-500">
-                          {log.messages?.length || 0} messages &middot;{" "}
+                          {Math.min(log.messages?.length || 0, 10)} messages &middot;{" "}
                           {log.lastActivity ? formatTime(log.lastActivity) : "—"}
                         </p>
+                        {log.messages && log.messages.length > 0 && expandedLog !== log._id && (
+                          <p className="text-[11px] mt-1.5 truncate max-w-sm" style={{ color: "#475569" }}>
+                            {log.messages[log.messages.length - 1].text}
+                          </p>
+                        )}
                       </div>
                     </div>
                     {expandedLog === log._id ? (
@@ -1151,7 +1156,7 @@ export default function FelixPage() {
                       className="px-5 pb-5 space-y-2 border-t"
                       style={{ borderColor: "rgba(255,255,255,0.05)" }}
                     >
-                      {(log.messages || []).map((m, i) => (
+                      {(log.messages || []).slice(-10).map((m, i) => (
                         <div key={i} className="flex gap-3 pt-3">
                           <div
                             className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black shrink-0 mt-0.5"
