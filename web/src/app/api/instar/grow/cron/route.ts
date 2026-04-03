@@ -613,9 +613,13 @@ async function growCronTick(
         searchLabel = currentTarget.type === "hashtag" ? `#${currentTarget.value}` : `@${currentTarget.value}`;
         addGrowLog(`🎯 Gathering posts from ${searchLabel} (${actionName}s)...`, "info");
 
+        const hashtagVariants = ["", "top/", "reels/"];
+        const variantSuffix = currentTarget.type === "hashtag"
+          ? hashtagVariants[currentIndex % hashtagVariants.length]
+          : "";
         const targetUrl =
           currentTarget.type === "hashtag"
-            ? `https://www.instagram.com/explore/tags/${encodeURIComponent(currentTarget.value)}/`
+            ? `https://www.instagram.com/explore/tags/${encodeURIComponent(currentTarget.value)}/${variantSuffix}`
             : `https://www.instagram.com/${encodeURIComponent(currentTarget.value)}/`;
 
         try {

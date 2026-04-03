@@ -22,6 +22,7 @@ if (g.xavier_grow_initialized === undefined) {
   // Action modes: 0=like, 1=follow, 2=retweet, 3=reply
   g.xavier_grow_actionMode = 0;
   g.xavier_grow_browser = null;
+  g.xavier_grow_seenTweetUrls = new Set<string>();
 }
 
 // ── Action mode labels ────────────────────────────────────────────────────────
@@ -166,7 +167,7 @@ async function getOrCreatePage(browser: Browser): Promise<Page> {
   const pages = await browser.pages();
   const page = pages.length > 0 ? pages[0] : await browser.newPage();
   await page.setUserAgent(
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
   );
   return page;
 }
@@ -203,12 +204,22 @@ async function getSearchTweets(
   type: "keyword" | "hashtag" | "profile"
 ): Promise<{ tweetUrl: string; username: string; tweetText: string }[]> {
   let url: string;
+  // Alternate filter tabs each tick so we never hit the exact same URL twice in a row.
+  // tickIndex is incremented before getSearchTweets is called, so odd/even alternates per tick.
+  const tickIndex = g.xavier_grow_targetIndex as number;
+  const useAlt = tickIndex % 2 === 0;
+
   if (type === "hashtag") {
-    url = `https://x.com/search?q=%23${encodeURIComponent(query.replace(/^#/, ""))}&f=top`;
+    // Alternate between "top" and "live" (recent) for hashtags
+    const filter = useAlt ? "top" : "live";
+    url = `https://x.com/search?q=%23${encodeURIComponent(query.replace(/^#/, ""))}&f=${filter}`;
   } else if (type === "profile") {
     url = `https://x.com/${encodeURIComponent(query.replace(/^@/, ""))}`;
   } else {
-    url = `https://x.com/search?q=${encodeURIComponent(query)}&f=latest`;
+    // Alternate between "latest" and "top"; every 3rd tick also exclude retweets for variety
+    const filter = useAlt ? "latest" : "top";
+    const noRt = tickIndex % 3 === 0 ? " -filter:retweets" : "";
+    url = `https://x.com/search?q=${encodeURIComponent(query + noRt)}&f=${filter}`;
   }
 
   await page.goto(url, { waitUntil: "networkidle2", timeout: 40000 });
@@ -836,22 +847,35 @@ async function growthTick() {
     page = await getOrCreatePage(browser);
     await setTwitterCookies(page, sessionDoc);
 
-    // Login check — use domcontentloaded to avoid ERR_ABORTED on networkidle2
-    // X.com often aborts background XHR requests which causes networkidle2 to throw
-    try {
-      await page.goto("https://x.com/home", {
-        waitUntil: "domcontentloaded",
-        timeout: 40000,
-      });
-    } catch (navErr: any) {
-      // ERR_ABORTED is safe to ignore — the page content still loads
-      if (!navErr.message?.includes("ERR_ABORTED") && !navErr.message?.includes("net::")) {
-        throw navErr;
-      }
-    }
-    await randDelay(2000, 3000);
+    // Login check — only navigate to x.com/home if we're NOT already on x.com.
+    // Navigating home on every tick is an extra predictable request X can fingerprint.
+    const currentUrl = page.url();
+    const alreadyOnX = currentUrl.includes("x.com") &&
+      !currentUrl.includes("/login") &&
+      !currentUrl.includes("i/flow");
 
-    let loggedIn = await isLoggedIn(page);
+    let loggedIn = false;
+    if (alreadyOnX) {
+      // Quick DOM check — no navigation needed
+      loggedIn = await isLoggedIn(page);
+    }
+
+    if (!loggedIn) {
+      // Not on x.com yet, or DOM check failed — navigate to home to verify
+      try {
+        await page.goto("https://x.com/home", {
+          waitUntil: "domcontentloaded",
+          timeout: 40000,
+        });
+      } catch (navErr: any) {
+        // ERR_ABORTED is safe to ignore — the page content still loads
+        if (!navErr.message?.includes("ERR_ABORTED") && !navErr.message?.includes("net::")) {
+          throw navErr;
+        }
+      }
+      await randDelay(2000, 3000);
+      loggedIn = await isLoggedIn(page);
+    }
 
     // ── Handle Passcode Challenge ──────────────────────────────────────────
     if (!loggedIn && sessionDoc.passcode) {
@@ -896,6 +920,37 @@ async function growthTick() {
       return;
     }
 
+    if (!g.xavier_grow_seenTweetUrls) g.xavier_grow_seenTweetUrls = new Set<string>();
+    for (const t of tweets) g.xavier_grow_seenTweetUrls.add(t.tweetUrl);
+    if (g.xavier_grow_seenTweetUrls.size > 500) g.xavier_grow_seenTweetUrls.clear();
+
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const tweetUrlsInPool = tweets.map((t) => t.tweetUrl);
+    const alreadyActedDocs = await db
+      .collection("xavier_growth_logs")
+      .find(
+        {
+          targetTweetUrl: { $in: tweetUrlsInPool },
+          action: actionLabel,
+          status: "success",
+          timestamp: { $gte: sevenDaysAgo },
+        },
+        { projection: { targetTweetUrl: 1 } }
+      )
+      .toArray();
+    const alreadyActedSet = new Set(alreadyActedDocs.map((d: any) => d.targetTweetUrl));
+
+    const freshTweets = tweets.filter((t) => !alreadyActedSet.has(t.tweetUrl));
+    addLog(
+      `Search returned ${tweets.length} tweet(s), ${freshTweets.length} fresh (${tweets.length - freshTweets.length} already ${actionLabel}d)`,
+      "info"
+    );
+
+    if (!freshTweets.length) {
+      addLog(`All tweets from ${target.type}=${target.value} already ${actionLabel}d — skipping`, "warning");
+      return;
+    }
+
     // Execute action
     if (actionMode === 3) {
       // For REPLIES only: Filter by keyword to ensure on-topic engagement
@@ -904,14 +959,13 @@ async function growthTick() {
       const allFilters = [..._keywords, ..._hashtags];
 
       if (allFilters.length > 0) {
-        // Try to find a tweet in the top 5 results that matches the filter
-        const matches = tweets.slice(0, 8).filter(t => {
+        const matches = freshTweets.slice(0, 8).filter(t => {
           const txt = t.tweetText.toLowerCase();
           return allFilters.some(f => txt.includes(f));
         });
 
         if (matches.length === 0) {
-          addLog(`No tweets from search results matched your keywords [${allFilters.join(', ')}]. Skipping reply.`, "warning");
+          addLog(`No fresh tweets matched your keywords [${allFilters.join(', ')}]. Skipping reply.`, "warning");
           return;
         }
 
@@ -930,8 +984,8 @@ async function growthTick() {
       }
     }
 
-    // Default: Pick a random tweet from results (original logic)
-    const pick = tweets[Math.floor(Math.random() * Math.min(tweets.length, 5))];
+    // Default: Pick a random tweet from fresh results
+    const pick = freshTweets[Math.floor(Math.random() * Math.min(freshTweets.length, 5))];
     addLog(`Picked tweet by @${pick.username}: ${pick.tweetUrl}`, "info");
 
     if (actionMode === 0) {
