@@ -82,16 +82,36 @@ export async function POST(req: NextRequest) {
     let passcode: string | undefined;
 
     if (body.rawCookies) {
-      const raw: string = body.rawCookies;
-      const parse = (key: string): string | undefined => {
-        const m = raw.match(new RegExp(`(?:^|;\\s*)${key}=([^;]+)`));
-        return m ? decodeURIComponent(m[1].trim()) : undefined;
-      };
-      auth_token = parse("auth_token") ?? "";
-      ct0 = parse("ct0") ?? "";
-      twid = parse("twid");
-      // twid comes as "u%3D123456789" — decode it
-      if (twid) twid = decodeURIComponent(twid);
+      const raw: string = body.rawCookies.trim();
+
+      // Check if it's a JSON array (from Cookie-Editor)
+      if (raw.startsWith("[")) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            auth_token = parsed.find(c => c.name === "auth_token")?.value ?? "";
+            ct0 = parsed.find(c => c.name === "ct0")?.value ?? "";
+            twid = parsed.find(c => c.name === "twid")?.value;
+            if (twid) twid = decodeURIComponent(twid);
+          } else {
+            auth_token = "";
+            ct0 = "";
+          }
+        } catch (e) {
+          auth_token = "";
+          ct0 = "";
+        }
+      } else {
+        // Fallback to raw string parsing
+        const parse = (key: string): string | undefined => {
+          const m = raw.match(new RegExp(`(?:^|;\\s*)${key}=([^;]+)`));
+          return m ? decodeURIComponent(m[1].trim()) : undefined;
+        };
+        auth_token = parse("auth_token") ?? "";
+        ct0 = parse("ct0") ?? "";
+        twid = parse("twid");
+        if (twid) twid = decodeURIComponent(twid).split("=").pop();
+      }
     } else {
       auth_token = String(body.auth_token ?? "").trim();
       ct0 = String(body.ct0 ?? "").trim();
@@ -102,8 +122,14 @@ export async function POST(req: NextRequest) {
     passcode = body.passcode ? String(body.passcode).trim() : undefined;
 
     if (!auth_token || !ct0) {
+      if (body.rawCookies) {
+        return NextResponse.json(
+          { error: "Could not find auth_token or ct0 in the provided JSON/cookies. Please ensure you are pasting the correct format from Cookie-Editor." },
+          { status: 400 }
+        );
+      }
       return NextResponse.json(
-        { error: "auth_token and ct0 are required." },
+        { error: "auth_token and ct0 are required for manual setup." },
         { status: 400 }
       );
     }

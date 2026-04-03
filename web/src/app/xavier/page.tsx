@@ -725,8 +725,8 @@ export default function XavierPage() {
                   </h3>
                   <p className="text-xs mb-5" style={{ color: "#5a5e72" }}>
                     {twSession.exists 
-                      ? "Paste fresh Twitter cookies to refresh your session."
-                      : "Paste your authentication JSON or manual tokens below."}
+                      ? "Choose either JSON (recommended) or Manual input to refresh your session."
+                      : "Connect your Twitter account using either JSON (from Cookie-Editor) or manual entry below."}
                   </p>
                 </div>
                 <div className="flex gap-2 p-1 rounded-xl bg-white/5 border border-white/5">
@@ -778,32 +778,33 @@ export default function XavierPage() {
                       />
                     </div>
                   ))}
-                  
-                  <div>
-                    <label className="block text-xs font-semibold mb-2" style={{ color: "#94a3b8" }}>Username (optional)</label>
-                    <input
-                      type="text"
-                      value={manualUsername}
-                      onChange={(e) => setManualUsername(e.target.value)}
-                      placeholder="@yourhandle"
-                      className="w-full px-4 py-2.5 rounded-xl text-sm text-white placeholder-gray-600 outline-none border transition-all"
-                      style={{ background: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.1)" }}
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold mb-2" style={{ color: "#94a3b8" }}>Passcode (backup/2FA)</label>
-                    <input
-                      type="password"
-                      value={manualPasscode}
-                      onChange={(e) => setManualPasscode(e.target.value)}
-                      placeholder="Your 2FA or backup code"
-                      className="w-full px-4 py-2.5 rounded-xl text-sm text-white placeholder-gray-600 outline-none border transition-all"
-                      style={{ background: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.1)" }}
-                    />
-                  </div>
                 </div>
               )}
+
+              <div className="space-y-4 pt-2">
+                <div>
+                  <label className="block text-xs font-semibold mb-2" style={{ color: "#94a3b8" }}>Username (optional)</label>
+                  <input
+                    type="text"
+                    value={manualUsername}
+                    onChange={(e) => setManualUsername(e.target.value)}
+                    placeholder="@yourhandle"
+                    className="w-full px-4 py-2.5 rounded-xl text-sm text-white placeholder-gray-600 outline-none border transition-all"
+                    style={{ background: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.1)" }}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-2" style={{ color: "#94a3b8" }}>Passcode (backup/2FA)</label>
+                  <input
+                    type="password"
+                    value={manualPasscode}
+                    onChange={(e) => setManualPasscode(e.target.value)}
+                    placeholder="Your 2FA or backup code"
+                    className="w-full px-4 py-2.5 rounded-xl text-sm text-white placeholder-gray-600 outline-none border transition-all"
+                    style={{ background: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.1)" }}
+                  />
+                </div>
+              </div>
 
               <button
                 onClick={saveSession}

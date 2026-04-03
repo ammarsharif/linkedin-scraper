@@ -891,7 +891,7 @@ export default function ScraperPage() {
                               >
                                 {pidx + 1}
                               </td>
-                              <td className="truncate-cell">
+                              <td className="truncate-cell" title={post.text || ""}>
                                 {post.text
                                   ? post.text.length > 120
                                     ? post.text.slice(0, 120) + "…"
@@ -899,8 +899,9 @@ export default function ScraperPage() {
                                   : "—"}
                               </td>
                               <td
-                                className="whitespace-nowrap text-xs"
-                                style={{ color: "var(--text-secondary)" }}
+                                className="truncate-cell text-xs"
+                                style={{ color: "var(--text-secondary)", maxWidth: "150px" }}
+                                title={post.postedDate}
                               >
                                 {post.postedDate || "—"}
                               </td>
@@ -913,7 +914,7 @@ export default function ScraperPage() {
                               <td className="text-center text-sm">
                                 {post.repostsCount || 0}
                               </td>
-                              <td>
+                              <td className="whitespace-nowrap">
                                 {post.postUrl ? (
                                   <a
                                     href={post.postUrl}

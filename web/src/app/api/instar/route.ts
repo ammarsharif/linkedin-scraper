@@ -78,22 +78,38 @@ export async function POST(req: NextRequest) {
     let rawCookies: string | undefined;
 
     if (body.rawCookies && typeof body.rawCookies === "string") {
-      const raw = body.rawCookies as string;
-      const parse = (key: string): string | undefined => {
-        const m = raw.match(new RegExp(`(?:^|;\\s*)${key}=([^;]+)`));
-        return m ? decodeURIComponent(m[1].trim()) : undefined;
-      };
-
-      sessionid = parse("sessionid") ?? "";
-      ds_user_id = parse("ds_user_id") ?? "";
-      csrftoken = parse("csrftoken") ?? "";
-      mid = parse("mid");
+      const raw: string = body.rawCookies.trim();
       rawCookies = raw;
       username = body.username ? String(body.username) : undefined;
 
+      if (raw.startsWith("[")) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            sessionid = parsed.find(c => c.name === "sessionid")?.value ?? "";
+            ds_user_id = parsed.find(c => c.name === "ds_user_id")?.value ?? "";
+            csrftoken = parsed.find(c => c.name === "csrftoken")?.value ?? "";
+            mid = parsed.find(c => c.name === "mid")?.value;
+          } else {
+            sessionid = ""; ds_user_id = ""; csrftoken = "";
+          }
+        } catch (e) {
+          sessionid = ""; ds_user_id = ""; csrftoken = "";
+        }
+      } else {
+        const parse = (key: string): string | undefined => {
+          const m = raw.match(new RegExp(`(?:^|;\\s*)${key}=([^;]+)`));
+          return m ? decodeURIComponent(m[1].trim()) : undefined;
+        };
+        sessionid = parse("sessionid") ?? "";
+        ds_user_id = parse("ds_user_id") ?? "";
+        csrftoken = parse("csrftoken") ?? "";
+        mid = parse("mid");
+      }
+
       if (!sessionid || !ds_user_id) {
         return NextResponse.json(
-          { error: "rawCookies must contain at least sessionid and ds_user_id." },
+          { error: "Could not find sessionid or ds_user_id in the provided JSON/cookies. Please ensure you are pasting the correct format." },
           { status: 400 }
         );
       }
@@ -106,7 +122,7 @@ export async function POST(req: NextRequest) {
 
       if (!sessionid || !ds_user_id || !csrftoken) {
         return NextResponse.json(
-          { error: "sessionid, ds_user_id, and csrftoken are required." },
+          { error: "Manual setup requires sessionid, ds_user_id, and csrftoken." },
           { status: 400 }
         );
       }
