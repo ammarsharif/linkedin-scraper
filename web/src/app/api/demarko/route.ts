@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDatabase, StoredProfile, EmailRecord } from "@/lib/mongodb";
+import { getLinkedInCookies } from "@/lib/linkedin";
 import nodemailer from "nodemailer";
 
 export const maxDuration = 60;
@@ -118,7 +119,7 @@ function generateEmailHtml(params: {
 
 export async function GET(req: NextRequest) {
   try {
-    const cookieString = req.cookies.get("li_session")?.value;
+    const cookieString = await getLinkedInCookies(req);
     if (!cookieString) {
       return NextResponse.json(
         { error: "Not authenticated." },
@@ -145,7 +146,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const cookieString = req.cookies.get("li_session")?.value;
+    const cookieString = await getLinkedInCookies(req);
     if (!cookieString) {
       return NextResponse.json(
         { error: "Not authenticated." },

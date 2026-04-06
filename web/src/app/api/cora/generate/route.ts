@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDatabase } from "@/lib/mongodb";
+import { getLinkedInCookies } from "@/lib/linkedin";
 import { ObjectId } from "mongodb";
 import OpenAI from "openai";
 
@@ -13,7 +14,7 @@ function getOpenAIClient(): OpenAI {
 
 export async function POST(req: NextRequest) {
   try {
-    const cookieString = req.cookies.get("li_session")?.value;
+    const cookieString = await getLinkedInCookies(req);
     if (!cookieString) {
       return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
     }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDatabase } from "@/lib/mongodb";
 import puppeteer, { Browser } from "puppeteer";
+import { getLinkedInCookies } from "@/lib/linkedin";
 
 export const maxDuration = 60;
 
@@ -22,7 +23,7 @@ async function getPostBrowser(): Promise<Browser> {
 // Body: { content: string, contentId?: string }
 export async function POST(req: NextRequest) {
   try {
-    const cookieString = req.cookies.get("li_session")?.value;
+    const cookieString = await getLinkedInCookies(req);
     if (!cookieString) {
       return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
     }
@@ -184,7 +185,7 @@ export async function POST(req: NextRequest) {
 // ── GET: Recent autopost history ───────────────────────────────────────────
 export async function GET(req: NextRequest) {
   try {
-    const cookieString = req.cookies.get("li_session")?.value;
+    const cookieString = await getLinkedInCookies(req);
     if (!cookieString) {
       return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
     }

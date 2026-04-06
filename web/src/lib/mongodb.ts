@@ -49,6 +49,17 @@ export async function getDatabase(): Promise<Db> {
   }
 }
 
+// ── Cindy (LinkedIn) Auth ─────────────────────────────────────────────────
+
+export interface CindyConfig {
+  _id?: string;
+  type: "li_session";
+  rawCookies: string;
+  name?: string;
+  savedAt: string;
+  status: "active" | "expired";
+}
+
 // ── Instar (Instagram) Interfaces ─────────────────────────────────────────
 
 export interface InstarConfig {

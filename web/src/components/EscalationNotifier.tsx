@@ -209,8 +209,23 @@ export function EscalationNotifier() {
     }
 
     checkAll();
-    const interval = setInterval(checkAll, POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
+    const interval = setInterval(() => {
+      if (document.visibilityState === "visible") {
+        checkAll();
+      }
+    }, 120_000);
+
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        checkAll();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, []);
 
   const visible = expiredSessions.filter((s) => !dismissed.has(s.botId));

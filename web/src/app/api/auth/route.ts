@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { validateCookie, extractLiAt, extractJsessionId } from "@/lib/linkedin";
 import { resolveSessionAlert } from "@/lib/sessionAlert";
+import { getDatabase } from "@/lib/mongodb";
 
 export async function POST(req: NextRequest) {
   try {
@@ -56,6 +57,26 @@ export async function POST(req: NextRequest) {
     // Store display name (readable)
     response.cookies.set("li_name", name, { ...cookieOpts, httpOnly: false });
 
+    // Persist to DB so all bots read fresh cookies from a single source of truth
+    try {
+      const db = await getDatabase();
+      await db.collection("cindy_config").updateOne(
+        { type: "li_session" },
+        { 
+          $set: { 
+            type: "li_session", 
+            rawCookies: rawCookie, 
+            name: name,
+            savedAt: new Date().toISOString(), 
+            status: "active" 
+          } 
+        },
+        { upsert: true }
+      );
+    } catch (dbErr) {
+      console.error("[auth] Failed to save LinkedIn session to DB:", dbErr);
+    }
+
     await resolveSessionAlert("cindy");
 
     return response;
@@ -66,15 +87,58 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
-  const session = req.cookies.get("li_session")?.value;
-  if (!session) return NextResponse.json({ authenticated: false });
-  const name = req.cookies.get("li_name")?.value ?? "LinkedIn User";
-  return NextResponse.json({ authenticated: true, name });
+  // Check browser cookie first
+  let session = req.cookies.get("li_session")?.value;
+  let name = req.cookies.get("li_name")?.value;
+
+  if (session) {
+    return NextResponse.json({ authenticated: true, name: name ?? "LinkedIn User" });
+  }
+
+  // Fallback: Check DB if browser session is missing (e.g. after manual DB update or browser logout)
+  try {
+    const db = await getDatabase();
+    const doc = await db.collection("cindy_config").findOne({ type: "li_session", status: "active" });
+
+    if (doc?.rawCookies) {
+      const dbSession = doc.rawCookies as string;
+      const dbName = (doc.name as string) ?? "LinkedIn User";
+
+      const response = NextResponse.json({ authenticated: true, name: dbName });
+
+      // Sync back to browser cookies
+      const cookieOpts = {
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "strict" as const,
+        path: "/",
+        maxAge: 60 * 60 * 24 * 7,
+      };
+      response.cookies.set("li_session", dbSession, { ...cookieOpts, httpOnly: true });
+      response.cookies.set("li_name", dbName, { ...cookieOpts, httpOnly: false });
+
+      return response;
+    }
+  } catch (err) {
+    console.error("[auth GET] DB session sync failed:", err);
+  }
+
+  return NextResponse.json({ authenticated: false });
 }
 
 export async function DELETE() {
   const res = NextResponse.json({ success: true });
   res.cookies.delete("li_session");
   res.cookies.delete("li_name");
+
+  try {
+    const db = await getDatabase();
+    await db.collection("cindy_config").updateOne(
+      { type: "li_session" },
+      { $set: { status: "expired" } }
+    );
+  } catch (dbErr) {
+    console.error("[auth] Failed to expire LinkedIn session in DB:", dbErr);
+  }
+
   return res;
 }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { extractJsessionId } from "@/lib/linkedin";
+import { extractJsessionId, getLinkedInCookiesForCron } from "@/lib/linkedin";
 import { getDatabase } from "@/lib/mongodb";
 import { createSessionAlert } from "@/lib/sessionAlert";
 import { randomUUID, randomBytes } from "crypto";
@@ -178,7 +178,16 @@ function buildSendHeaders(cookieString: string, csrfToken: string) {
 }
 
 // The actual cron tick function
-async function cronTick(cookieString: string) {
+async function cronTick(fallbackCookie: string) {
+  // Always try DB first so updating cookies in DB auto-renews the session
+  const cookieString = await getLinkedInCookiesForCron(fallbackCookie);
+  if (!cookieString) {
+    addCronLog("No LinkedIn cookies available (DB and fallback both missing).", "error");
+    return;
+  }
+  // Keep in-memory cache in sync with whatever we're using
+  storedCookie = cookieString;
+
   const csrfToken = extractJsessionId(cookieString) || "";
   if (!csrfToken) {
     addCronLog("Could not extract JSESSIONID from cookie.", "error");
@@ -566,7 +575,8 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "start") {
-      const cookieString = req.cookies.get("li_session")?.value;
+      // Prefer DB cookies (source of truth); fallback to request cookie
+      const cookieString = await getLinkedInCookiesForCron(req.cookies.get("li_session")?.value);
       if (!cookieString) {
         return NextResponse.json(
           { error: "Not authenticated. Please log in first." },

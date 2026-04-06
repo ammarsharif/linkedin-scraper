@@ -5,6 +5,8 @@
  * to accept server-side requests — li_at alone always results in a 302 redirect.
  */
 
+import type { NextRequest } from "next/server";
+
 export interface LinkedInProfile {
   name: string;
   headline: string;
@@ -24,6 +26,41 @@ export interface LinkedInPost {
   imageUrls: string[];
   videoUrl: string | null;
   articleUrl: string | null;
+}
+
+// ─── DB-aware session getter ──────────────────────────────────────────────────
+
+/**
+ * Returns the LinkedIn cookie string for use in API calls.
+ * DB is the source of truth (so updating cookies in DB auto-renews all bots).
+ * Falls back to the request cookie if DB has no active session.
+ */
+export async function getLinkedInCookies(req?: NextRequest): Promise<string | null> {
+  try {
+    const { getDatabase } = await import("./mongodb");
+    const db = await getDatabase();
+    const doc = await db.collection("cindy_config").findOne({ type: "li_session", status: "active" });
+    if (doc?.rawCookies) return doc.rawCookies as string;
+  } catch {
+    // DB unavailable — fall through to cookie
+  }
+  return req?.cookies.get("li_session")?.value ?? null;
+}
+
+/**
+ * Returns the LinkedIn cookie string without a request context (for cron jobs).
+ * Always reads from DB so that updating cookies in the DB takes effect immediately.
+ */
+export async function getLinkedInCookiesForCron(fallback?: string | null): Promise<string | null> {
+  try {
+    const { getDatabase } = await import("./mongodb");
+    const db = await getDatabase();
+    const doc = await db.collection("cindy_config").findOne({ type: "li_session", status: "active" });
+    if (doc?.rawCookies) return doc.rawCookies as string;
+  } catch {
+    // DB unavailable — use fallback
+  }
+  return fallback ?? null;
 }
 
 // ─── cookie helpers ────────────────────────────────────────────────────────────

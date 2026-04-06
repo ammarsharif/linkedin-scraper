@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
+import { getLinkedInCookies } from "@/lib/linkedin";
 
 export const maxDuration = 60;
 
@@ -148,7 +149,7 @@ OUTPUT (JSON):
 
 export async function POST(req: NextRequest) {
   try {
-    const cookieString = req.cookies.get("li_session")?.value;
+    const cookieString = await getLinkedInCookies(req);
     if (!cookieString) {
       return NextResponse.json(
         { error: "Not authenticated." },

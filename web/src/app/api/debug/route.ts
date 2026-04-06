@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { parseCookieString, extractJsessionId } from "@/lib/linkedin";
+import { parseCookieString, extractJsessionId, getLinkedInCookies } from "@/lib/linkedin";
 
 export const maxDuration = 60;
 
@@ -30,7 +30,7 @@ function extractCodeBlocks(html: string): string[] {
 }
 
 export async function GET(req: NextRequest) {
-  const sessionCookie = req.cookies.get("li_session")?.value;
+  const sessionCookie = await getLinkedInCookies(req);
   if (!sessionCookie) {
     return NextResponse.json({ error: "No li_session cookie — please log in first" }, { status: 401 });
   }

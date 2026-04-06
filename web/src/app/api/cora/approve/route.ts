@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDatabase } from "@/lib/mongodb";
+import { getLinkedInCookies } from "@/lib/linkedin";
 
 export const maxDuration = 30;
 
 export async function POST(req: NextRequest) {
   try {
-    const cookieString = req.cookies.get("li_session")?.value;
+    const cookieString = await getLinkedInCookies(req);
     if (!cookieString) {
       return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
     }
@@ -51,7 +52,7 @@ export async function POST(req: NextRequest) {
 
 export async function GET(req: NextRequest) {
   try {
-    const cookieString = req.cookies.get("li_session")?.value;
+    const cookieString = await getLinkedInCookies(req);
     if (!cookieString) {
       return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
     }

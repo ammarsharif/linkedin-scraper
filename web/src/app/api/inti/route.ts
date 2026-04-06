@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
+import { getLinkedInCookies } from "@/lib/linkedin";
 
 export const maxDuration = 120;
 
@@ -184,7 +185,7 @@ Now generate the pitch using the ${TONE_LABELS[tone]} tone. Make it feel deeply 
 
 export async function POST(req: NextRequest) {
   try {
-    const cookieString = req.cookies.get("li_session")?.value;
+    const cookieString = await getLinkedInCookies(req);
     if (!cookieString) {
       return NextResponse.json(
         { error: "Not authenticated. Please log in again." },

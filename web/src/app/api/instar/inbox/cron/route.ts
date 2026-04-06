@@ -71,7 +71,7 @@ if (g.instar_inbox_initialized === undefined) {
   g.instar_inbox_autoAcceptRequests = true;
   g.instar_inbox_tickRunning = false;
   g.instar_inbox_tickStartedAt = null;
-  g.instar_inbox_processingConvs = new Set();
+  g.instar_inbox_cronLog = [];
   g.instar_inbox_systemPrompt =
     "You are a professional Instagram assistant. Reply briefly, warmly and professionally to Instagram Direct Messages on behalf of the user. Keep replies under 3 sentences. Be friendly and authentic.";
 }

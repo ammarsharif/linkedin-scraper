@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getLinkedInCookies } from "@/lib/linkedin";
 
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
@@ -10,7 +11,7 @@ export const dynamic = "force-dynamic";
  */
 export async function POST(req: NextRequest) {
   try {
-    const cookieString = req.cookies.get("li_session")?.value;
+    const cookieString = await getLinkedInCookies(req);
     if (!cookieString) {
       return NextResponse.json(
         { error: "Not authenticated. Please log in again." },

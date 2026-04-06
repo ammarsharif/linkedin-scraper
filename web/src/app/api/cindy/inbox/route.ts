@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { extractJsessionId, parseCookieString } from "@/lib/linkedin";
+import { extractJsessionId, parseCookieString, getLinkedInCookies } from "@/lib/linkedin";
 import { getDatabase, KnowledgeBaseEntry } from "@/lib/mongodb";
 import { randomUUID, randomBytes } from "crypto";
 
@@ -226,7 +226,7 @@ function parseUnreadMessages(data: any): UnreadMessage[] {
 // ── GET: Fetch unread conversations ──────────────────────────────────────────
 export async function GET(req: NextRequest) {
   try {
-    const cookieString = req.cookies.get("li_session")?.value;
+    const cookieString = await getLinkedInCookies(req);
     if (!cookieString) {
       return NextResponse.json(
         { error: "Not authenticated." },
@@ -288,7 +288,7 @@ export async function GET(req: NextRequest) {
 // ── POST: Generate AI reply + Send it ────────────────────────────────────────
 export async function POST(req: NextRequest) {
   try {
-    const cookieString = req.cookies.get("li_session")?.value;
+    const cookieString = await getLinkedInCookies(req);
     if (!cookieString) {
       return NextResponse.json(
         { error: "Not authenticated." },

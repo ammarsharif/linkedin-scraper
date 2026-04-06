@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
-import { extractVanityName } from "@/lib/linkedin";
+import { extractVanityName, getLinkedInCookies } from "@/lib/linkedin";
 import { getDatabase } from "@/lib/mongodb";
 
 export const maxDuration = 300;
@@ -267,7 +267,7 @@ Generate a complete, detailed persona analysis. Every section must be thoroughly
 
 export async function POST(req: NextRequest) {
   try {
-    const cookieString = req.cookies.get("li_session")?.value;
+    const cookieString = await getLinkedInCookies(req);
     if (!cookieString) {
       return NextResponse.json(
         { error: "Not authenticated. Please log in again." },
