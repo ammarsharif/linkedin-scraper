@@ -4,7 +4,7 @@ import {
   InstarChatMessage,
   KnowledgeBaseEntry,
 } from "@/lib/mongodb";
-import { createSessionAlert } from "@/lib/sessionAlert";
+import { createSessionAlert, resolveSessionAlert } from "@/lib/sessionAlert";
 import puppeteer, { Browser, Page } from "puppeteer";
 import OpenAI from "openai";
 import { processFollowUps, markFollowUpReplied, registerFollowUp } from "@/lib/followup";
@@ -68,6 +68,7 @@ if (g.instar_inbox_initialized === undefined) {
   g.instar_inbox_processedThreadIds = new Set();
   g.instar_inbox_cacheLastCleared = Date.now();
   g.instar_inbox_consecutiveErrors = 0;
+  g.instar_inbox_sessionSuspended = false;
   g.instar_inbox_autoAcceptRequests = true;
   g.instar_inbox_tickRunning = false;
   g.instar_inbox_tickStartedAt = null;
@@ -520,13 +521,28 @@ Reply: "We do not offer refunds as per our policy."` },
 }
 
 // ── Main DM cron tick ──────────────────────────────────────────────────────
-async function dmCronTick(
-  sessionid: string,
-  ds_user_id: string,
-  csrftoken: string,
-  mid?: string,
-) {
+async function dmCronTick() {
   if (!g.instar_inbox_cronRunning) return;
+
+  // ── Session suspended: check if session was restored in DB ──────────────
+  if (g.instar_inbox_sessionSuspended) {
+    try {
+      const db = await getDatabase();
+      const sessionDoc = await db.collection("instar_config").findOne({ type: "ig_session" });
+      if (sessionDoc?.sessionid && sessionDoc?.status === "active") {
+        addCronLog("Instagram session restored — resuming inbox cron", "success");
+        g.instar_inbox_sessionSuspended = false;
+        g.instar_inbox_consecutiveErrors = 0;
+        await resolveSessionAlert("instar");
+      } else {
+        addCronLog("Instagram session still expired — waiting for session refresh in DB", "warning");
+        return;
+      }
+    } catch {
+      return;
+    }
+  }
+
   if (g.instar_inbox_tickRunning) {
      const startedAt = g.instar_inbox_tickStartedAt ? new Date(g.instar_inbox_tickStartedAt).getTime() : 0;
      const runningMs = Date.now() - startedAt;
@@ -547,6 +563,21 @@ async function dmCronTick(
   try {
     g.instar_inbox_lastCronRun = new Date().toISOString();
     addCronLog("Checking Instagram DMs via Puppeteer...", "info");
+
+    // Always re-read session from DB so refreshed credentials are picked up immediately
+    const db = await getDatabase();
+    const sessionDoc = await db.collection("instar_config").findOne({ type: "ig_session" });
+    if (!sessionDoc?.sessionid) {
+      addCronLog("No Instagram session in DB — suspending inbox cron until session is updated", "error");
+      await createSessionAlert("instar", "Instagram");
+      g.instar_inbox_sessionSuspended = true;
+      return;
+    }
+    const sessionid = sessionDoc.sessionid as string;
+    const ds_user_id = sessionDoc.ds_user_id as string;
+    const csrftoken = sessionDoc.csrftoken as string;
+    const mid = sessionDoc.mid as string | undefined;
+
     const browser = await getBrowser();
     const pages = await browser.pages();
     let page = pages.find((p) => p.url().includes("instagram.com")) as
@@ -572,9 +603,16 @@ async function dmCronTick(
           ? [{ name: "mid", value: mid, domain: ".instagram.com" }]
           : []),
       );
+    } else {
+      // Re-inject fresh cookies into existing page to pick up any refreshed session
+      await page.setCookie(
+        { name: "sessionid", value: sessionid, domain: ".instagram.com" },
+        { name: "ds_user_id", value: ds_user_id, domain: ".instagram.com" },
+        { name: "csrftoken", value: csrftoken, domain: ".instagram.com" },
+        ...(mid ? [{ name: "mid", value: mid, domain: ".instagram.com" }] : []),
+      );
     }
 
-    const db = await getDatabase();
     const openai = getOpenAI();
 
     // Navigate to inbox once to activate the session in the browser context
@@ -591,11 +629,11 @@ async function dmCronTick(
       );
       await navigateTo(page, "https://www.instagram.com/direct/inbox/");
       if (page.url().includes("/accounts/login")) {
-        addCronLog("Session truly expired – cookies invalid. Update session in settings.", "error");
+        addCronLog("Instagram session expired — suspending inbox cron (will auto-resume when session is refreshed in DB)", "error");
         await db.collection("instar_config").updateOne({ type: "ig_session" }, { $set: { status: "expired" } });
         await createSessionAlert("instar", "Instagram");
-        g.instar_inbox_consecutiveErrors++;
-        return;
+        g.instar_inbox_sessionSuspended = true;
+        return; // suspend, do NOT stop cron
       }
       addCronLog("Session restored successfully.", "success");
     }
@@ -815,16 +853,15 @@ export async function POST(req: NextRequest) {
         };
 
       g.instar_inbox_cronRunning = true;
+      g.instar_inbox_sessionSuspended = false;
       g.instar_inbox_processedThreadIds.clear();
       g.instar_inbox_cacheLastCleared = Date.now();
       addCronLog("DM cron started.", "success");
 
       // Run immediately, then every 90 seconds
-      dmCronTick(sessionid, ds_user_id, csrftoken, mid);
-      g.instar_inbox_cronInterval = setInterval(
-        () => dmCronTick(sessionid, ds_user_id, csrftoken, mid),
-        90_000,
-      );
+      // Session is now re-read from DB on every tick — no need to pass it here
+      dmCronTick();
+      g.instar_inbox_cronInterval = setInterval(() => dmCronTick(), 90_000);
 
       return NextResponse.json({ success: true, message: "DM cron started." });
     }

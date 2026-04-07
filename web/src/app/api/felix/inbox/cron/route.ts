@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDatabase, KnowledgeBaseEntry } from "@/lib/mongodb";
+import { createSessionAlert, resolveSessionAlert } from "@/lib/sessionAlert";
 import puppeteer, { Browser } from "puppeteer";
 import { processFollowUps, markFollowUpReplied, registerFollowUp } from "@/lib/followup";
 
@@ -64,6 +65,7 @@ if (g.felix_initialized === undefined) {
     g.felix_cronLog = [];
     g.felix_processedMessageIds = new Set();
     g.felix_consecutiveErrors = 0;
+    g.felix_sessionSuspended = false;
     g.felix_systemPrompt = "You are a professional Facebook Messenger assistant. Reply briefly, warmly and professionally to Facebook messages on behalf of the user. Keep replies under 3 sentences. Do not use emojis.";
     g.felix_storedCUser = null;
     g.felix_storedXs = null;
@@ -105,7 +107,7 @@ async function getBrowser(): Promise<Browser> {
 }
 
 // ── Main cron tick ────────────────────────────────────────────────────────────
-async function cronTick(c_user: string, xs: string, datr: string | null) {
+async function cronTick() {
   if (!g.felix_cronRunning) return;
   
   if (g.felix_cronTickRunning) {
@@ -125,6 +127,26 @@ async function cronTick(c_user: string, xs: string, datr: string | null) {
   addCronLog("Checking for unread messages using Puppeteer Tracker...", "info");
 
   try {
+    // Always re-read session from DB so refreshed credentials are picked up immediately
+    const db = await getDatabase();
+    const sessionDoc = await db.collection("felix_config").findOne({ type: "fb_session" });
+    let c_user: string, xs: string, datr: string | null = null;
+    if (sessionDoc?.c_user && sessionDoc?.xs) {
+      c_user = sessionDoc.c_user as string;
+      xs = sessionDoc.xs as string;
+      datr = (sessionDoc.datr as string) || null;
+      g.felix_storedCUser = c_user; g.felix_storedXs = xs; g.felix_storedDatr = datr;
+    } else if (g.felix_storedCUser && g.felix_storedXs) {
+      c_user = g.felix_storedCUser as string;
+      xs = g.felix_storedXs as string;
+      datr = g.felix_storedDatr as string | null;
+    } else {
+      addCronLog("No Facebook session available — suspending cron until session is updated", "error");
+      await createSessionAlert("felix", "Facebook");
+      g.felix_sessionSuspended = true;
+      return;
+    }
+
     const browser = await getBrowser();
     
     // Check if we have an open page or open a new one
@@ -132,6 +154,13 @@ async function cronTick(c_user: string, xs: string, datr: string | null) {
     let page = pages.find(p => p.url().includes("facebook.com"));
     if (!page) {
       page = await browser.newPage();
+      await page.setCookie(
+        { name: "c_user", value: c_user, domain: ".facebook.com" },
+        { name: "xs", value: xs, domain: ".facebook.com" },
+        ...(datr ? [{ name: "datr", value: datr, domain: ".facebook.com" }] : [])
+      );
+    } else {
+      // Re-inject fresh cookies into existing page to pick up any refreshed session
       await page.setCookie(
         { name: "c_user", value: c_user, domain: ".facebook.com" },
         { name: "xs", value: xs, domain: ".facebook.com" },
@@ -150,6 +179,17 @@ async function cronTick(c_user: string, xs: string, datr: string | null) {
     await new Promise(r => setTimeout(r, 6000));
     
     addCronLog(`Puppeteer is currently at URL: ${page.url()}`, "info");
+
+    // Check if session expired (redirected to login)
+    if (page.url().includes("login") || page.url().includes("checkpoint")) {
+      addCronLog("Facebook session expired — suspending inbox cron (will auto-resume when session is refreshed in DB)", "error");
+      await db.collection("felix_config").updateOne({ type: "fb_session" }, { $set: { status: "expired" } }, { upsert: true });
+      await createSessionAlert("felix", "Facebook");
+      g.felix_sessionSuspended = true;
+      return; // suspend, do NOT stop cron
+    }
+
+    // Note: db is already available from the session read above — used for conversation logs below
 
     // Check if there is an E2EE "Restore PIN" prompt on the screen
     const e2eePrompt = await page.evaluate(() => {
@@ -254,9 +294,6 @@ async function cronTick(c_user: string, xs: string, datr: string | null) {
     const openaiKey = process.env.OPENAI_API_KEY;
     if (!openaiKey) { addCronLog("OPENAI_API_KEY not set.", "error"); return; }
     
-    // Get DB once for locks
-    const db = await getDatabase();
-
     for (const thread of threadsToProcess) {
       if (!g.felix_cronRunning) {
         addCronLog("Cron stopped mid-execution. Aborting early.", "warning");
@@ -489,10 +526,7 @@ Reply: "We do not offer refunds as per our policy."` },
     const errMsg = err instanceof Error ? err.message : "Unknown error";
     addCronLog(`Puppeteer Cron error: ${errMsg}`, "error");
     g.felix_consecutiveErrors++;
-    if (g.felix_consecutiveErrors >= 3) {
-      addCronLog("3 consecutive cron errors. Stopping.", "error");
-      stopCron();
-    }
+    // Don't stop cron on errors — just log and let it retry next tick
   } finally {
     g.felix_cronTickRunning = false;
     g.felix_tickStartedAt = null;
@@ -505,11 +539,11 @@ Reply: "We do not offer refunds as per our policy."` },
 function startCron(c_user: string, xs: string, datr: string | null) {
   if (g.felix_cronInterval) return;
   g.felix_storedCUser = c_user; g.felix_storedXs = xs; g.felix_storedDatr = datr;
-  g.felix_cronRunning = true; g.felix_consecutiveErrors = 0;
+  g.felix_cronRunning = true; g.felix_consecutiveErrors = 0; g.felix_sessionSuspended = false;
   addCronLog("Puppeteer Cron started — checking every 60 seconds.", "success");
-  cronTick(c_user, xs, datr);
+  cronTick();
   g.felix_cronInterval = setInterval(() => {
-    if (g.felix_storedCUser && g.felix_storedXs) cronTick(g.felix_storedCUser, g.felix_storedXs, g.felix_storedDatr);
+    cronTick();
   }, 60_000);
 }
 
@@ -533,6 +567,7 @@ export async function GET() {
   return NextResponse.json({ 
     running: g.felix_cronRunning, 
     tickRunning: g.felix_cronTickRunning,
+    sessionSuspended: g.felix_sessionSuspended ?? false,
     lastRun: g.felix_lastCronRun, 
     processedCount: g.felix_processedMessageIds.size, 
     logs: g.felix_cronLog.slice(-30), 
