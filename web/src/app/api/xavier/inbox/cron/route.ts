@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDatabase, KnowledgeBaseEntry } from "@/lib/mongodb";
-import { createSessionAlert } from "@/lib/sessionAlert";
+import { createSessionAlert, resolveSessionAlert } from "@/lib/sessionAlert";
 import puppeteer, { Browser, Page } from "puppeteer";
 import OpenAI from "openai";
 import { processFollowUps, markFollowUpReplied, registerFollowUp } from "@/lib/followup";
@@ -65,6 +65,7 @@ if (g.xavier_inbox_initialized === undefined) {
   g.xavier_inbox_lastRun = null;
   g.xavier_inbox_log = [];
   g.xavier_inbox_consecutiveErrors = 0;
+  g.xavier_inbox_sessionSuspended = false;
   g.xavier_inbox_browser = null;
   // Per-conversation in-memory lock: Set<conversationId> being processed RIGHT NOW
   g.xavier_inbox_processingConvs = new Set<string>();
@@ -206,6 +207,25 @@ function parseXMessagesFromApiResponse(json: any, myUserId: string) {
 
 // ── DM Inbox Tick ─────────────────────────────────────────────────────────────
 async function inboxTick() {
+  // ── Session suspended: check if session was restored in DB ────────────────
+  if (g.xavier_inbox_sessionSuspended) {
+    try {
+      const db = await getDatabase();
+      const sessionDoc = await db.collection("xavier_config").findOne({ type: "tw_session" });
+      if (sessionDoc?.auth_token && sessionDoc?.status === "active") {
+        addLog("Twitter session restored — resuming inbox cron", "success");
+        g.xavier_inbox_sessionSuspended = false;
+        g.xavier_inbox_consecutiveErrors = 0;
+        await resolveSessionAlert("xavier");
+      } else {
+        addLog("Twitter session still expired — waiting for session refresh in DB", "warning");
+        return;
+      }
+    } catch {
+      return;
+    }
+  }
+
   // ── Stale lock detection: if a tick has been running for >10 minutes,
   //    it must have crashed without hitting the finally block — force-reset it.
   if (g.xavier_inbox_tickRunning) {
@@ -334,13 +354,13 @@ async function inboxTick() {
     }
 
     if (!loggedIn) {
-      addLog("Session expired or challenge failed — marking as expired", "error");
+      addLog("Twitter session expired — suspending inbox cron (will auto-resume when session is refreshed in DB)", "error");
       await db
         .collection("xavier_config")
         .updateOne({ type: "tw_session" }, { $set: { status: "expired" } });
       await createSessionAlert("xavier", "Twitter/X");
-      g.xavier_inbox_consecutiveErrors++;
-      return;
+      g.xavier_inbox_sessionSuspended = true;
+      return; // skip tick, do NOT stop cron
     }
 
     // ── API-first: use intercepted response if available ─────────────────────
@@ -925,6 +945,7 @@ function startInbox() {
   if (g.xavier_inbox_running) return "already_running";
   g.xavier_inbox_running = true;
   g.xavier_inbox_consecutiveErrors = 0;
+  g.xavier_inbox_sessionSuspended = false;
   addLog("Xavier inbox bot started", "success");
   g.xavier_inbox_interval = setInterval(() => {
     inboxTick().catch((e) =>
@@ -961,6 +982,7 @@ export async function GET() {
     lastRun: g.xavier_inbox_lastRun ?? null,
     logs: g.xavier_inbox_log ?? [],
     consecutiveErrors: g.xavier_inbox_consecutiveErrors ?? 0,
+    sessionSuspended: g.xavier_inbox_sessionSuspended ?? false,
     dmSystemPrompt: g.xavier_inbox_dmSystemPrompt,
     processingConversations: [...(g.xavier_inbox_processingConvs ?? new Set())],
   });
