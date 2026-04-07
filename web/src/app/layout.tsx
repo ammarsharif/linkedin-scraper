@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { EscalationNotifier } from "@/components/EscalationNotifier";
+import { GlobalCronControls } from "@/components/GlobalCronControls";
 import "./globals.css";
 
 const inter = Inter({
@@ -38,6 +39,7 @@ export default function RootLayout({
         className={`${inter.variable} ${jetbrainsMono.variable} antialiased`}
       >
         <EscalationNotifier />
+        <GlobalCronControls />
         {children}
       </body>
     </html>
