@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { extractJsessionId, getLinkedInCookiesForCron } from "@/lib/linkedin";
 import { getDatabase } from "@/lib/mongodb";
-import { createSessionAlert } from "@/lib/sessionAlert";
+import { createSessionAlert, resolveSessionAlert } from "@/lib/sessionAlert";
 import { randomUUID, randomBytes } from "crypto";
 import { processFollowUps, markFollowUpReplied, registerFollowUp } from "@/lib/followup";
 import { KnowledgeBaseEntry } from "@/lib/mongodb";
@@ -100,22 +100,28 @@ const LINKEDIN_API_URL =
   "?queryId=messengerConversations.0d5e6781bbee71c3e51c8843c6519f48" +
   "&variables=(mailboxUrn:urn%3Ali%3Afsd_profile%3AACoAAGUt7KsBAHMQRodG7z6z8EjY3JaOMFu5TmM)";
 
-// ── In-memory state for the cron ─────────────────────────────────────────────
-let cronInterval: ReturnType<typeof setInterval> | null = null;
-let cronRunning = false;
-let cronTickRunning = false;
-let cronTickStartedAt: string | null = null;
-let processingConvs: Set<string> = new Set();
-let lastCronRun: string | null = null;
-let cronLog: { time: string; message: string; type: "info" | "success" | "error" | "warning" }[] = [];
-let processedMessageIds: Set<string> = new Set();
+// ── State management via globalThis ──────────────────────────────────────────
+const g = globalThis as any;
+if (g.cindy_inbox_initialized === undefined) {
+  g.cindy_inbox_initialized = true;
+  g.cindy_inbox_interval = null;
+  g.cindy_inbox_running = false;
+  g.cindy_inbox_tickRunning = false;
+  g.cindy_inbox_tickStartedAt = null;
+  g.cindy_inbox_lastRun = null;
+  g.cindy_inbox_log = [];
+  g.cindy_inbox_processingConvs = new Set<string>();
+  g.cindy_inbox_processedMessageIds = new Set<string>();
+  g.cindy_inbox_sessionSuspended = false;
+  g.cindy_inbox_storedCookie = null;
+}
 
 // Keep at most 50 log entries
 function addCronLog(message: string, type: "info" | "success" | "error" | "warning" = "info") {
   const entry = { time: new Date().toISOString(), message, type };
-  cronLog.push(entry);
-  if (cronLog.length > 50) cronLog = cronLog.slice(-50);
-  console.log(`[cron][${type}] ${message}`);
+  g.cindy_inbox_log.push(entry);
+  if (g.cindy_inbox_log.length > 50) g.cindy_inbox_log = g.cindy_inbox_log.slice(-50);
+  console.log(`[cindy-cron][${type}] ${message}`);
 }
 
 function buildLinkedInHeaders(cookieString: string, csrfToken: string) {
@@ -178,38 +184,56 @@ function buildSendHeaders(cookieString: string, csrfToken: string) {
 }
 
 // The actual cron tick function
-async function cronTick(fallbackCookie: string) {
+async function cronTick() {
+  if (!g.cindy_inbox_running) return;
+
+  // ── Session suspended: check if session was restored in DB ──────────────────
+  if (g.cindy_inbox_sessionSuspended) {
+    try {
+      const db = await getDatabase();
+      const sessionDoc = await db.collection("linkedin_sessions").findOne({ botId: "cindy" });
+      if (sessionDoc?.cookies && sessionDoc?.status === "active") {
+        addCronLog("LinkedIn session restored — resuming Cindy bot", "success");
+        g.cindy_inbox_sessionSuspended = false;
+        await resolveSessionAlert("cindy");
+      } else {
+        addCronLog("LinkedIn session still expired — waiting for session refresh in DB", "warning");
+        return; // skip tick but keep cron running
+      }
+    } catch {
+      return;
+    }
+  }
+
   // Always try DB first so updating cookies in DB auto-renews the session
-  const cookieString = await getLinkedInCookiesForCron(fallbackCookie);
+  const cookieString = await getLinkedInCookiesForCron(g.cindy_inbox_storedCookie);
   if (!cookieString) {
     addCronLog("No LinkedIn cookies available (DB and fallback both missing).", "error");
     return;
   }
   // Keep in-memory cache in sync with whatever we're using
-  storedCookie = cookieString;
+  g.cindy_inbox_storedCookie = cookieString;
 
   const csrfToken = extractJsessionId(cookieString) || "";
   if (!csrfToken) {
     addCronLog("Could not extract JSESSIONID from cookie.", "error");
     return;
   }
-
-  if (!cronRunning) return;
   
-  if (cronTickRunning) {
-    const startedAt = cronTickStartedAt ? new Date(cronTickStartedAt).getTime() : 0;
+  if (g.cindy_inbox_tickRunning) {
+    const startedAt = g.cindy_inbox_tickStartedAt ? new Date(g.cindy_inbox_tickStartedAt).getTime() : 0;
     const runningForMs = Date.now() - startedAt;
     if (runningForMs < 10 * 60 * 1000) {
       addCronLog(`Cron tick already running (for ${Math.round(runningForMs / 1000)}s) — skipping`, "warning");
       return;
     }
     addCronLog(`Stale tick lock detected (${Math.round(runningForMs / 1000)}s) — force resetting`, "warning");
-    processingConvs = new Set();
+    g.cindy_inbox_processingConvs = new Set();
   }
-  cronTickRunning = true;
-  cronTickStartedAt = new Date().toISOString();
+  g.cindy_inbox_tickRunning = true;
+  g.cindy_inbox_tickStartedAt = new Date().toISOString();
 
-  lastCronRun = new Date().toISOString();
+  g.cindy_inbox_lastRun = new Date().toISOString();
   addCronLog("Checking for unread messages...", "info");
 
   try {
@@ -218,17 +242,17 @@ async function cronTick(fallbackCookie: string) {
     const res = await safeFetch(LINKEDIN_API_URL, { headers, cache: "no-store" as RequestCache });
 
     if (!res) {
-      addCronLog("LinkedIn rejected request — cookies may be expired.", "error");
+      addCronLog("LinkedIn rejected request — cookies may be expired. Suspending cron.", "error");
       await createSessionAlert("cindy", "LinkedIn");
-      stopCron();
+      g.cindy_inbox_sessionSuspended = true;
       return;
     }
 
     if (!res.ok) {
       if (res.status === 401) {
-        addCronLog("LinkedIn cookies expired (401). Please re-authenticate.", "error");
+        addCronLog("LinkedIn cookies expired (401). Suspending cron until DB update.", "error");
         await createSessionAlert("cindy", "LinkedIn");
-        stopCron();
+        g.cindy_inbox_sessionSuspended = true;
         return;
       }
       addCronLog(`LinkedIn API error: ${res.status}`, "error");
@@ -253,7 +277,7 @@ async function cronTick(fallbackCookie: string) {
     let newMessages = 0;
 
     for (const conv of elements) {
-      if (!cronRunning) {
+      if (!g.cindy_inbox_running) {
         addCronLog("Cron stopped mid-execution. Aborting early.", "warning");
         return;
       }
@@ -272,7 +296,7 @@ async function cronTick(fallbackCookie: string) {
 
       // Build unique ID
       const msgId = latest.backendUrn || String(latest.deliveredAt || "");
-      if (processedMessageIds.has(msgId)) continue;
+      if (g.cindy_inbox_processedMessageIds.has(msgId)) continue;
 
       // Skip if I sent it
       const senderUrn =
@@ -294,7 +318,7 @@ async function cronTick(fallbackCookie: string) {
       addCronLog(`New message from ${senderName}: "${messageText.slice(0, 60)}..."`, "info");
 
       // ── Concurrency Check ──
-      if (processingConvs.has(conversationUrn)) {
+      if (g.cindy_inbox_processingConvs.has(conversationUrn)) {
         addCronLog(`Skipping ${senderName} — already being processed.`, "warning");
         continue;
       }
@@ -310,7 +334,7 @@ async function cronTick(fallbackCookie: string) {
         addCronLog(`Cleared stale DB lock for ${senderName}`, "info");
       }
       
-      processingConvs.add(conversationUrn);
+      g.cindy_inbox_processingConvs.add(conversationUrn);
       await db.collection("conversation_logs").updateOne(
         { conversationUrn },
         { $set: { processingLockedAt: new Date().toISOString() } },
@@ -435,7 +459,7 @@ Reply: "We do not offer refunds as per our policy."` },
         if (!sendRes) {
           addCronLog(`LinkedIn rejected send for ${senderName} — auth issue.`, "error");
         } else if (sendRes.ok) {
-          processedMessageIds.add(msgId);
+          g.cindy_inbox_processedMessageIds.add(msgId);
           newMessages++;
           addCronLog(`✅ Replied to ${senderName}: "${replyText.slice(0, 50)}..."`, "success");
 
@@ -472,7 +496,7 @@ Reply: "We do not offer refunds as per our policy."` },
         const errMsg = aiErr instanceof Error ? aiErr.message : "Unknown AI error";
         addCronLog(`AI/Send error for ${senderName}: ${errMsg}`, "error");
       } finally {
-        processingConvs.delete(conversationUrn);
+        g.cindy_inbox_processingConvs.delete(conversationUrn);
         await db.collection("conversation_logs").updateOne({ conversationUrn }, { $unset: { processingLockedAt: "" } }).catch(()=>{});
       }
     }
@@ -490,49 +514,50 @@ Reply: "We do not offer refunds as per our policy."` },
     const msg = err instanceof Error ? err.message : "Unknown error";
     addCronLog(`Cron error: ${msg}`, "error");
   } finally {
-    cronTickRunning = false;
-    cronTickStartedAt = null;
-    processingConvs.clear();
+    g.cindy_inbox_tickRunning = false;
+    g.cindy_inbox_tickStartedAt = null;
+    g.cindy_inbox_processingConvs.clear();
   }
 }
-
-// Store cookie for background cron usage
+// Store cookie for background cron usage (deprecated but kept for compatibility logic)
 let storedCookie: string | null = null;
 
 function startCron(cookieString: string) {
-  if (cronInterval) return;
-  storedCookie = cookieString;
-  cronRunning = true;
+  if (g.cindy_inbox_interval) return;
+  g.cindy_inbox_storedCookie = cookieString;
+  g.cindy_inbox_running = true;
+  g.cindy_inbox_sessionSuspended = false;
   addCronLog("Cron started — checking every 60 seconds.", "success");
 
   // Run immediately
-  cronTick(cookieString);
+  cronTick();
 
   // Then every 60 seconds
-  cronInterval = setInterval(() => {
-    if (storedCookie) cronTick(storedCookie);
+  g.cindy_inbox_interval = setInterval(() => {
+    cronTick();
   }, 60_000);
 }
 
 function stopCron() {
-  if (cronInterval) {
-    clearInterval(cronInterval);
-    cronInterval = null;
+  if (g.cindy_inbox_interval) {
+    clearInterval(g.cindy_inbox_interval);
+    g.cindy_inbox_interval = null;
   }
-  cronRunning = false;
-  storedCookie = null;
+  g.cindy_inbox_running = false;
+  g.cindy_inbox_storedCookie = null;
   addCronLog("Cron stopped.", "warning");
 }
 
 // ── GET: Get cron status ─────────────────────────────────────────────────────
 export async function GET() {
   return NextResponse.json({
-    running: cronRunning,
-    tickRunning: cronTickRunning,
-    lastRun: lastCronRun,
-    processedCount: processedMessageIds.size,
-    logs: cronLog.slice(-30),
-    processingConversations: [...processingConvs]
+    running: g.cindy_inbox_running,
+    tickRunning: g.cindy_inbox_tickRunning,
+    sessionSuspended: g.cindy_inbox_sessionSuspended,
+    lastRun: g.cindy_inbox_lastRun,
+    processedCount: g.cindy_inbox_processedMessageIds.size,
+    logs: g.cindy_inbox_log.slice(-30),
+    processingConversations: [...g.cindy_inbox_processingConvs]
   });
 }
 
@@ -584,7 +609,7 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      if (cronRunning) {
+      if (g.cindy_inbox_running) {
         return NextResponse.json({
           success: true,
           message: "Cron is already running.",
@@ -592,7 +617,7 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      processedMessageIds = new Set();
+      g.cindy_inbox_processedMessageIds = new Set();
       startCron(cookieString);
       return NextResponse.json({
         success: true,
@@ -611,12 +636,12 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "clear-logs") {
-      cronLog = [];
+      g.cindy_inbox_log = [];
       return NextResponse.json({ success: true, message: "Logs cleared." });
     }
 
     if (action === "reset-processed") {
-      processedMessageIds = new Set();
+      g.cindy_inbox_processedMessageIds = new Set();
       return NextResponse.json({
         success: true,
         message: "Processed message IDs reset.",
