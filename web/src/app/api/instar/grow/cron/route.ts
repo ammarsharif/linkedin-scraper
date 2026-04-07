@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDatabase } from "@/lib/mongodb";
-import { createSessionAlert } from "@/lib/sessionAlert";
+import { createSessionAlert, resolveSessionAlert } from "@/lib/sessionAlert";
 import puppeteer, { Browser } from "puppeteer";
 import OpenAI from "openai";
 
@@ -16,6 +16,7 @@ if (g.instar_grow_initialized === undefined) {
   g.instar_grow_lastGrowRun = null;
   g.instar_grow_growLog = [];
   g.instar_grow_consecutiveErrors = 0;
+  g.instar_grow_sessionSuspended = false;
   g.instar_grow_dailyCounts = { follow: 0, like: 0, comment: 0 };
   g.instar_grow_settings = null;
   // Round-robin index so we cycle through all targets instead of picking randomly
@@ -440,13 +441,27 @@ async function performComment(
 }
 
 // ── Main Growth Cron Tick ─────────────────────────────────────────────────────
-async function growCronTick(
-  sessionid: string,
-  ds_user_id: string,
-  csrftoken: string,
-  mid: string | undefined
-) {
+async function growCronTick() {
   if (!g.instar_grow_growRunning) return;
+
+  // ── Session suspended: check if session was restored in DB ──────────────────
+  if (g.instar_grow_sessionSuspended) {
+    try {
+      const db = await getDatabase();
+      const sessionDoc = await db.collection("instar_config").findOne({ type: "ig_session" });
+      if (sessionDoc?.sessionid && sessionDoc?.status === "active") {
+        addGrowLog("Instagram session restored — resuming growth bot", "success");
+        g.instar_grow_sessionSuspended = false;
+        g.instar_grow_consecutiveErrors = 0;
+        await resolveSessionAlert("instar");
+      } else {
+        addGrowLog("Instagram session still expired — waiting for session refresh in DB", "warning");
+        return; // skip tick but keep cron running
+      }
+    } catch {
+      return;
+    }
+  }
 
   if (g.instar_grow_tickRunning) {
     addGrowLog("Previous tick still running, skipping this interval.", "warning");
@@ -514,6 +529,17 @@ async function growCronTick(
     const openai = settings.enableComment ? getOpenAI() : (null as any);
     const db = await getDatabase();
 
+    // Always re-read session from DB so refreshed credentials are picked up immediately
+    const sessionDoc = await db.collection("instar_config").findOne({ type: "ig_session" });
+    if (!sessionDoc?.sessionid) {
+      addGrowLog("No Instagram session found in DB — skipping tick", "error");
+      return;
+    }
+    const sessionid = sessionDoc.sessionid as string;
+    const ds_user_id = sessionDoc.ds_user_id as string;
+    const csrftoken = sessionDoc.csrftoken as string;
+    const mid = sessionDoc.mid as string | undefined;
+
     try {
       const page = await browser.newPage();
 
@@ -571,9 +597,12 @@ async function growCronTick(
             alreadyFollowedUsers.add(pt.value);
             actionsThisTick++;
           } else if (result === "failed" && page.url().includes("/accounts/login")) {
-            // Session expired — abort
+            // Session expired — suspend cron, do not stop it
+            addGrowLog("❌ Session expired during direct follow. Suspending cron until session is refreshed.", "error");
+            await db.collection("instar_config").updateOne({ type: "ig_session" }, { $set: { status: "expired" } });
+            await createSessionAlert("instar", "Instagram");
+            g.instar_grow_sessionSuspended = true;
             await page.close();
-            g.instar_grow_consecutiveErrors++;
             g.instar_grow_tickRunning = false;
             return;
           }
@@ -866,9 +895,10 @@ async function growCronTick(
             if (success) alreadyFollowedUsers.add(postInfo.username);
             // If session expired, abort the whole tick
             if (followResult === "failed" && page.url().includes("/accounts/login")) {
-              addGrowLog("❌ Session expired mid-tick. Aborting.", "error");
+              addGrowLog("❌ Session expired mid-tick. Suspending cron until session is refreshed.", "error");
               await db.collection("instar_config").updateOne({ type: "ig_session" }, { $set: { status: "expired" } });
               await createSessionAlert("instar", "Instagram");
+              g.instar_grow_sessionSuspended = true;
               break;
             }
           } else {
@@ -1035,6 +1065,7 @@ export async function POST(req: NextRequest) {
       }
 
       g.instar_grow_growRunning = true;
+      g.instar_grow_sessionSuspended = false;
       // Always start fresh from comment mode
       g.instar_grow_actionMode = 0;
       addGrowLog(
@@ -1042,22 +1073,10 @@ export async function POST(req: NextRequest) {
         "success"
       );
 
-      const { sessionid, ds_user_id, csrftoken, mid } =
-        sessionDoc as unknown as {
-          sessionid: string;
-          ds_user_id: string;
-          csrftoken: string;
-          mid?: string;
-        };
+      // Run immediately, then every 20 minutes — session is read from DB on each tick
+      growCronTick();
 
-      // Run immediately
-      growCronTick(sessionid, ds_user_id, csrftoken, mid);
-
-      // Then every 20 minutes
-      g.instar_grow_growInterval = setInterval(
-        () => growCronTick(sessionid, ds_user_id, csrftoken, mid),
-        20 * 60 * 1000
-      );
+      g.instar_grow_growInterval = setInterval(() => growCronTick(), 20 * 60 * 1000);
 
       return NextResponse.json({ success: true, message: "Growth cron started." });
     }
