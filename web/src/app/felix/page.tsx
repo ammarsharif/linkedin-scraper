@@ -540,9 +540,9 @@ export default function FelixPage() {
       </header>
 
       {/* TAB BAR */}
-      <div className="relative z-10 mx-auto max-w-7xl px-6 pt-6">
+      <div className="relative z-10 mx-auto max-w-7xl px-6 pt-6 overflow-hidden">
         <div
-          className="flex items-center gap-1 p-1 rounded-xl w-fit overflow-x-auto shadow-sm"
+          className="flex items-center gap-1 p-1 rounded-xl w-full max-w-fit overflow-x-auto shadow-sm no-scrollbar"
           style={{
             background: "rgba(255,255,255,0.03)",
             border: "1px solid rgba(255,255,255,0.06)",
